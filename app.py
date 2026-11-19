@@ -32,7 +32,10 @@ with st.sidebar:
     size = st.selectbox("Report size", list(SIZE_PRESETS), index=1, format_func=size_label)
     depth = st.selectbox("Search depth", ["Auto", "0 - Quick", "1 - Standard", "2 - Technical", "3 - Deep"], index=0)
     st.subheader("Models")
-    st.table([{"Role": r["label"], "Model": r["model"], "Temp": r["temperature"]} for r in role_model_table(os.environ, pdf)])
+    st.table([
+        {"Role": r["label"], "Tier": r["tier"], "Model": r["model"], "Temp": r["temperature"]}
+        for r in role_model_table(os.environ, pdf)
+    ])
     st.subheader("Worker")
     health = WorkerClient(worker_url, timeout=3).health()
     if health.get("ok"):

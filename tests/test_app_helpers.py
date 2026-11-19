@@ -2,8 +2,8 @@ from app_helpers import missing_settings, role_model_table, size_label, stages_f
 
 FULL = {
     "SERPER_API_KEY": "k", "OPENROUTER_API_KEY": "k",
-    **{f"{p}_LLM": "openrouter/openai/gpt-oss-20b" for p in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "FIGURE_PLANNER")},
-    **{f"{p}_TEMP": "0.3" for p in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "FIGURE_PLANNER")},
+    "STRONG_LLM": "openrouter/openai/gpt-oss-120b",
+    "LIGHT_LLM": "openrouter/openai/gpt-oss-20b",
 }
 
 
@@ -11,11 +11,17 @@ def test_missing_settings_empty_when_complete():
     assert missing_settings(FULL) == []
 
 
-def test_missing_settings_flags_each_role():
-    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "FIGURE_PLANNER"):
-        env = {k: v for k, v in FULL.items() if not k.startswith(prefix)}
-        missing = missing_settings(env)
-        assert f"{prefix}_LLM" in missing and f"{prefix}_TEMP" in missing
+def test_missing_settings_names_the_tier_variable():
+    env = {k: v for k, v in FULL.items() if k != "LIGHT_LLM"}
+    assert missing_settings(env) == ["LIGHT_LLM"]
+    env = {k: v for k, v in FULL.items() if k != "STRONG_LLM"}
+    assert missing_settings(env) == ["STRONG_LLM"]
+
+
+def test_role_models_can_replace_a_tier():
+    env = {k: v for k, v in FULL.items() if k != "LIGHT_LLM"}
+    env.update({"EDITOR_LLM": "openrouter/x", "FIGURE_PLANNER_LLM": "openrouter/y"})
+    assert missing_settings(env) == []
 
 
 def test_missing_settings_requires_provider_key_for_openrouter_model():
@@ -39,10 +45,17 @@ def test_stages_for_pdf_includes_figures_and_render():
     assert stages_for(True) == ["route", "research", "analyse", "figures", "write", "render"]
 
 
-def test_role_model_table_shows_pdf_override():
+def test_role_model_table_shows_tiers_and_pdf_override():
     env = {**FULL, "WRITER_AGENT_LLM_PDF": "openrouter/openai/gpt-5", "WRITER_AGENT_TEMP_PDF": "0.2"}
     base = {r["role"]: r for r in role_model_table(env, pdf=False)}
     pdf = {r["role"]: r for r in role_model_table(env, pdf=True)}
-    assert base["writer"]["model"] == "openrouter/openai/gpt-oss-20b"
+    assert base["router"]["model"] == "openrouter/openai/gpt-oss-120b" and base["router"]["tier"] == "strong"
+    assert base["editor"]["model"] == "openrouter/openai/gpt-oss-20b" and base["editor"]["tier"] == "light"
+    assert base["writer"]["temperature"] == "0.3"
     assert pdf["writer"]["model"] == "openrouter/openai/gpt-5" and pdf["writer"]["temperature"] == "0.2"
-    assert pdf["router"]["model"] == "openrouter/openai/gpt-oss-20b"
+    assert pdf["router"]["model"] == "openrouter/openai/gpt-oss-120b"
+
+
+def test_role_model_table_marks_unset():
+    rows = {r["role"]: r for r in role_model_table({}, pdf=False)}
+    assert rows["router"]["model"] == "(not set)"

@@ -229,3 +229,13 @@ def test_pdf_figure_cites_openalex_and_it_is_referenced(tmp_path):
     spec, _ = flow.figures[0]
     assert spec.source_ids
     assert f"[{spec.source_ids[0]}] OpenAlex" in md
+
+
+def test_flow_passes_editor_model_to_writer(tmp_path):
+    rec = Recorder()
+    writer, editor = ScriptedLLM(outline=_outline()), ScriptedLLM(outline=_outline())
+    deps = rec.deps(llm=writer)
+    deps.edit_llm = editor
+    ResearchFlow("GaN defects", deps=deps, base_dir=tmp_path).run()
+    assert editor.calls[0] == "OUTLINE_REQUEST"
+    assert "OUTLINE_REQUEST" not in writer.calls

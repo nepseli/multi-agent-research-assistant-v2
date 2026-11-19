@@ -126,3 +126,19 @@ def test_no_removed_citation_note_when_repair_fixes_everything(tmp_path):
     out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
     assert llm.calls.count("REPAIR_REQUEST") == 1
     assert not any("Removed citations" in n for n in out.notes)
+
+
+def test_editor_model_handles_outline_adjust_and_repair(tmp_path):
+    writer = ScriptedLLM(outline=_outline(3), section_factor=0.3, body_suffix="Claim [S1] and bogus [S99].")
+    editor = ScriptedLLM(outline=_outline(3), body_suffix="Still bogus [S99].")  # the length pass rewrites sections
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                 llm=writer, edit_llm=editor)
+    assert set(writer.calls) == {"SECTION_REQUEST"}
+    assert editor.calls[0] == "OUTLINE_REQUEST"
+    assert "ADJUST_REQUEST" in editor.calls and "REPAIR_REQUEST" in editor.calls
+
+
+def test_writer_alone_still_does_everything(tmp_path):
+    llm = ScriptedLLM(outline=_outline(3))
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    assert llm.calls[0] == "OUTLINE_REQUEST" and "SECTION_REQUEST" in llm.calls

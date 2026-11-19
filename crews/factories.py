@@ -154,4 +154,5 @@ def default_deps(pdf: bool = False, worker_url: str | None = None) -> FlowDeps:
         llm=make_llm_fn("writer", pdf),
         worker=worker,
         figure_llm=make_llm_fn("figure_planner", pdf),
+        edit_llm=make_llm_fn("editor", pdf),
     )

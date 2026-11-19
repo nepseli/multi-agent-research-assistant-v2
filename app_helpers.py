@@ -1,7 +1,7 @@
 """Pure helpers for the Streamlit app and CLI (no streamlit import, so they are unit-testable)."""
 from collections.abc import Mapping
 
-from core.config import _PREFIX, SIZE_PRESETS
+from core.config import _PREFIX, SIZE_PRESETS, TIER_VAR, resolve_llm
 
 PROVIDER_KEYS = {"openrouter": "OPENROUTER_API_KEY", "openai": "OPENAI_API_KEY", "groq": "GROQ_API_KEY"}
 ROLE_LABELS = {
@@ -9,6 +9,7 @@ ROLE_LABELS = {
     "research": "Research",
     "analyst": "Analyst",
     "writer": "Writer",
+    "editor": "Editor (outline, length, citations)",
     "figure_planner": "Figure planner",
 }
 
@@ -22,13 +23,15 @@ def missing_settings(env: Mapping[str, str]) -> list[str]:
     needed_keys: set[str] = set()
     if not _get(env, "SERPER_API_KEY"):
         missing.append("SERPER_API_KEY")
-    for prefix in _PREFIX.values():
-        for suffix in ("_LLM", "_TEMP"):
-            if not _get(env, prefix + suffix):
-                missing.append(prefix + suffix)
-        for var in (prefix + "_LLM", prefix + "_LLM_PDF"):
-            model = _get(env, var)
-            provider = model.split("/", 1)[0].lower() if "/" in model else ""
+    for role in _PREFIX:
+        for pdf in (False, True):
+            choice = resolve_llm(role, pdf, env)
+            if not choice.model:
+                var = TIER_VAR[choice.tier]
+                if var not in missing:
+                    missing.append(var)
+                continue
+            provider = choice.model.split("/", 1)[0].lower() if "/" in choice.model else ""
             if provider in PROVIDER_KEYS:
                 needed_keys.add(PROVIDER_KEYS[provider])
     for key in sorted(needed_keys):
@@ -50,8 +53,13 @@ def stages_for(pdf: bool) -> list[str]:
 
 def role_model_table(env: Mapping[str, str], pdf: bool) -> list[dict]:
     rows = []
-    for role, prefix in _PREFIX.items():
-        model = (_get(env, prefix + "_LLM_PDF") if pdf else "") or _get(env, prefix + "_LLM")
-        temp = (_get(env, prefix + "_TEMP_PDF") if pdf else "") or _get(env, prefix + "_TEMP")
-        rows.append({"role": role, "label": ROLE_LABELS[role], "model": model or "(not set)", "temperature": temp or "(not set)"})
+    for role in _PREFIX:
+        choice = resolve_llm(role, pdf, env)
+        rows.append({
+            "role": role,
+            "label": ROLE_LABELS[role],
+            "tier": choice.tier,
+            "model": choice.model or "(not set)",
+            "temperature": choice.temperature,
+        })
     return rows

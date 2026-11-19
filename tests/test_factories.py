@@ -10,9 +10,13 @@ from tests.fakes import FakeWorker
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch):
-    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "FIGURE_PLANNER"):
-        monkeypatch.setenv(f"{prefix}_LLM", "openrouter/openai/gpt-oss-20b")
-        monkeypatch.setenv(f"{prefix}_TEMP", "0.3")
+    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER"):
+        for suffix in ("_LLM", "_TEMP", "_LLM_PDF", "_TEMP_PDF"):
+            monkeypatch.delenv(prefix + suffix, raising=False)
+    for name in ("STRONG_LLM_PDF", "LIGHT_LLM_PDF"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("STRONG_LLM", "openrouter/openai/gpt-oss-120b")
+    monkeypatch.setenv("LIGHT_LLM", "openrouter/openai/gpt-oss-20b")
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
 
@@ -51,7 +55,21 @@ def test_pdf_mode_uses_pdf_model_override(monkeypatch):
     crew = factories.build_analyst_crew(pdf=True)
     assert "gpt-5" in crew.agents[0].llm.model
     base = factories.build_analyst_crew(pdf=False)
-    assert "gpt-oss-20b" in base.agents[0].llm.model
+    assert "gpt-oss-120b" in base.agents[0].llm.model
+
+
+def test_research_agent_uses_strong_tier(tmp_path):
+    ctx = new_run("t", base=tmp_path)
+    crew = factories.build_research_crew(_plan(1), ctx, FakeWorker(), pdf=False)
+    assert "gpt-oss-120b" in crew.agents[0].llm.model
+
+
+def test_default_deps_gives_writer_and_editor_separate_models(monkeypatch):
+    built = []
+    monkeypatch.setattr(factories, "make_llm_fn", lambda role, pdf=False: built.append(role) or (lambda p: ""))
+    deps = factories.default_deps(pdf=False, worker_url="http://localhost:9")
+    assert {"writer", "editor", "figure_planner"} <= set(built)
+    assert callable(deps.edit_llm)
 
 
 def test_default_deps_returns_callables():

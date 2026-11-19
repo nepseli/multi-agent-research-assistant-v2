@@ -41,6 +41,7 @@ class FlowDeps:
     llm: LLMFn
     worker: object
     figure_llm: LLMFn | None = None
+    edit_llm: LLMFn | None = None  # outline, length adjustment and citation repair; defaults to llm
     year_counts: Callable[[str, str | None], dict[int, int]] | None = None
 
 
@@ -237,6 +238,7 @@ class ResearchFlow(Flow[_State]):
             size=self.size,
             registry=self.ctx.registry,
             llm=self.deps.llm,
+            edit_llm=self.deps.edit_llm,
             pdf=self.pdf,
             notes=self.notes,
             extra_cited=[sid for spec, _ in self.figures for sid in spec.source_ids],

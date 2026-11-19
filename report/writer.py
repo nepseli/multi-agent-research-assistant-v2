@@ -97,7 +97,11 @@ def write_report(
     pdf: bool = False,
     notes: list[str] | None = None,
     extra_cited: list[str] | None = None,
+    edit_llm: LLMFn | None = None,
 ) -> WrittenReport:
+    """`llm` writes the prose sections; `edit_llm` (a lighter model) does the outline, length
+    adjustment and citation repair. Without `edit_llm`, `llm` does everything."""
+    edit = edit_llm or llm
     preset = SIZE_PRESETS[size]
     midpoint = (preset.words_min + preset.words_max) // 2
     notes = list(notes or [])
@@ -119,7 +123,7 @@ def write_report(
         text = f"# {topic}\n\n{body}"
     else:
         outline = _parse_outline(
-            llm(
+            edit(
                 "OUTLINE_REQUEST\nReturn ONLY a JSON list of objects {\"heading\": str, \"words\": int} "
                 f"for a {size} report; the word counts must total about {midpoint}.\n\n{material}"
             ),
@@ -139,13 +143,13 @@ def write_report(
     # One expand-or-trim pass if the length is off target.
     if word_status(count_words(text), preset) != "ok":
         if size == "small":
-            fixed = _clean_body(llm(f"ADJUST_REQUEST\nRewrite to about the target length.\nTARGET_WORDS: {midpoint}\n\nTEXT:\n{sections[0][1]}"), topic)
+            fixed = _clean_body(edit(f"ADJUST_REQUEST\nRewrite to about the target length.\nTARGET_WORDS: {midpoint}\n\nTEXT:\n{sections[0][1]}"), topic)
             sections = [("Report", fixed)]
             text = f"# {topic}\n\n{fixed}"
         else:
             adjusted = []
             for (heading, body), item in zip(sections, outline):
-                fixed = llm(
+                fixed = edit(
                     f"ADJUST_REQUEST\nHEADING: {heading}\nRewrite this section to about the target length "
                     f"(expand with evidence from the material, or trim).\nTARGET_WORDS: {item['words']}\n\n"
                     f"{material}\nTEXT:\n{body}"
@@ -158,7 +162,7 @@ def write_report(
     report = registry.validate_citations(text)
     unknown = list(report.unknown)
     if unknown:
-        repaired = llm(
+        repaired = edit(
             f"REPAIR_REQUEST\nThese citation ids do not exist: {', '.join(unknown)}. "
             f"Valid sources: {ids}. Rewrite the text keeping its structure, replacing or removing "
             f"invalid citations.\n\nTEXT:\n{text}"

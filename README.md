@@ -79,7 +79,14 @@ Without the worker the app still runs: it falls back to search snippets and abst
 
 ## Configuration
 
-`.env.example` lists every variable. Each role (router, research, analyst, writer, figure planner) has its own `*_LLM` and `*_TEMP`. To use a stronger model only for PDF reports, set the `_PDF` variants, for example `WRITER_AGENT_LLM_PDF`. Check the exact GPT-5 model ID in OpenRouter before using it.
+`.env.example` lists every variable. Models come in two tiers, so you normally set just two:
+
+| Setting | Default | Used by |
+|---------|---------|---------|
+| `STRONG_LLM` | `openrouter/openai/gpt-oss-120b` | router (triage), research agent, analyst, writer (report sections) |
+| `LIGHT_LLM` | `openrouter/openai/gpt-oss-20b` | editor (outline, length adjustment, citation repair), figure and diagram planner |
+
+Any role can be pinned to its own model with `ROUTER_AGENT_LLM`, `RESEARCH_AGENT_LLM`, `ANALYST_AGENT_LLM`, `WRITER_AGENT_LLM`, `EDITOR_LLM` or `FIGURE_PLANNER_LLM`. Temperatures are optional (`*_TEMP`). For PDF reports only, `STRONG_LLM_PDF` / `LIGHT_LLM_PDF` or a role's `*_LLM_PDF` take precedence; `openrouter/openai/gpt-5` is a valid OpenRouter ID. The Streamlit sidebar shows which model each step will use.
 
 ## Tests
 

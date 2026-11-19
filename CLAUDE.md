@@ -18,4 +18,4 @@ Multi-agent research assistant (CrewAI Flow). See README.md for the architecture
 - `worker/Dockerfile`, `worker/engines.py` (Docling, Playwright, Crawl4AI) — build and fix first.
 - Live router/research/analyst crews against a real model.
 - Streamlit Stop button and run loop in a real browser.
-- GPT-5 model ID on OpenRouter for the `*_PDF` overrides.
+- (Verified 2026-11-19: `openrouter/openai/gpt-5` exists on OpenRouter; models are set per tier with STRONG_LLM / LIGHT_LLM.)
