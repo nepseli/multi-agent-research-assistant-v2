@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>{{ title }}</title>
 <style>
-@page { size: A4; margin: 22mm 18mm; @bottom-center { content: counter(page); font-size: 9pt; color: #666; } }
+@page { size: A4; margin: 22mm 18mm; }  /* page numbers come from the renderer's "N / M" footer */
 body { font-family: "Georgia", serif; font-size: 10.5pt; line-height: 1.5; color: #222; }
 h1 { font-size: 22pt; color: #1f4e79; border-bottom: 2px solid #1f4e79; padding-bottom: 6px; }
 h2 { font-size: 14pt; color: #1f4e79; margin-top: 18pt; }
@@ -16,5 +16,6 @@ figure img { max-width: 100%; }
 <body>
 {{ body | safe }}
 {% if figures_html %}<h2>Figures</h2>{{ figures_html | safe }}{% endif %}
+{{ references | safe }}
 {% if notes %}<div class="notes"><h2>Coverage notes</h2><ul>{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
 </body></html>

@@ -14,9 +14,9 @@ class WorkerClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def _post_json(self, path: str, payload: dict) -> dict:
+    def _post_json(self, path: str, payload: dict, timeout: float | None = None) -> dict:
         try:
-            resp = httpx.post(f"{self.base_url}{path}", json=payload, timeout=self.timeout)
+            resp = httpx.post(f"{self.base_url}{path}", json=payload, timeout=timeout or self.timeout)
         except httpx.HTTPError as exc:
             return {"ok": False, "error": f"worker unreachable: {exc}"}
         try:
@@ -37,7 +37,8 @@ class WorkerClient:
         return self._post_json("/scrape", {"url": url, "timeout_s": timeout_s})
 
     def parse_pdf(self, url: str) -> dict:
-        return self._post_json("/parse-pdf", {"url": url})
+        # Docling on CPU takes ~25 s for a 15-page paper, so long papers need well over the default 120 s.
+        return self._post_json("/parse-pdf", {"url": url}, timeout=max(self.timeout, 300))
 
     def render_pdf(self, html: str, assets: dict[str, bytes] | None = None) -> bytes:
         encoded = {name: base64.b64encode(data).decode() for name, data in (assets or {}).items()}

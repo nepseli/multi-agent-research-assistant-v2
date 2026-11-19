@@ -63,7 +63,7 @@ Each run writes to `runs/<topic>-<timestamp>/`: `plan.json`, `findings.md`, `ana
 ```bash
 uv sync
 cp .env.example .env        # then add your keys
-docker compose up -d --build   # starts the worker on 127.0.0.1:8000 (first build is large)
+docker compose up -d --build   # starts the worker on 127.0.0.1:8000 (first build takes ~10 min; image is ~7.5 GB with Docling models)
 uv run streamlit run app.py
 ```
 
@@ -98,6 +98,6 @@ The suite uses fakes for the models and the worker, so it needs no API keys or D
 
 ## Known limits
 
-- The Docker image, Docling parsing and Playwright PDF rendering were written but not built or run in the development sandbox; test them on your machine first.
+- The Docker worker is built and smoke-tested. Docling runs on CPU at about 1.5 s per PDF page, so Tier 2 and 3 runs that read many PDFs spend much of their time limit parsing.
 - The Tier 3 gap check is an instruction to the research agent, not enforced code.
 - Live model behaviour (router quality, research crews) depends on the models you configure.

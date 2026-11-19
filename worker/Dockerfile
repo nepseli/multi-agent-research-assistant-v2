@@ -5,7 +5,7 @@ ENV PYTHONUNBUFFERED=1 \
     MERMAID_JS=/opt/mermaid/mermaid.min.js
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        nodejs npm curl ca-certificates \
+        nodejs npm curl ca-certificates libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Bundle mermaid so diagrams render offline inside Chromium.
@@ -15,9 +15,16 @@ RUN mkdir -p /opt/mermaid /tmp/mm && cd /tmp/mm && npm install mermaid@11 \
 
 WORKDIR /srv
 COPY worker/requirements.txt /srv/requirements.txt
+# CPU-only PyTorch for Docling: the default Linux wheel bundles several GB of CUDA libraries the worker never uses.
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install --with-deps chromium \
     && crawl4ai-setup
+
+# Bake Docling's layout and table models (~500 MB) into the image, so the first PDF does not
+# download them and recreating the container does not lose them.
+RUN python -c "from docling.document_converter import DocumentConverter; from docling.datamodel.base_models import InputFormat; DocumentConverter().initialize_pipeline(InputFormat.PDF)"
+ENV CRAWL4AI_NO_CLOUD_NOTICE=1
 
 COPY worker /srv/worker
 EXPOSE 8000
