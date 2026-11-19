@@ -353,3 +353,32 @@ def test_title_repeat_matches_across_hyphen_styles():
 
     out = _clean_body("**4. Key Agentic\u2011AI Start\u2011ups in Singapore**\n\nText.", "T", "4. Key Agentic AI Start-ups in Singapore")
     assert out == "Text."
+
+
+def test_claim_check_fixes_text_notes_the_result_and_returns_claims(tmp_path):
+    import json as _json
+
+    def checker(prompt):
+        ids = re.findall(r"^STATEMENT (\d+):", prompt, re.M)
+        return _json.dumps([{"id": int(i), "verdict": "unsupported", "fix": "Claim reworded [S99]."} for i in ids])
+
+    r = _registry(tmp_path)
+    r.add("https://a.com", "Alpha Source", "web", "read_page", content="Alpha says word word word.")
+    llm = ScriptedLLM(outline=_outline(3), body_suffix="Claim [S1].")
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=r, llm=llm, check_llm=checker)
+    assert out.claims and out.claims[0]["verdict"] == "unsupported"
+    assert any(n.startswith("Claim check:") for n in out.notes)
+    assert "Claim reworded" in out.markdown
+    assert "[S99]" not in out.markdown  # a fix cannot bring in an unknown source
+
+
+def test_no_claim_check_without_a_checker(tmp_path):
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                       llm=ScriptedLLM(outline=_outline(3), body_suffix="Claim [S1]."))
+    assert out.claims == [] and not any("Claim check" in n for n in out.notes)
+
+
+def test_style_forbids_adding_details_from_memory(tmp_path):
+    from report.writer import STYLE
+
+    assert "memory" in STYLE.lower() and "only" in STYLE.lower()

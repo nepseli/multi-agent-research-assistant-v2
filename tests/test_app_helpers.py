@@ -20,7 +20,7 @@ def test_missing_settings_names_the_tier_variable():
 
 def test_role_models_can_replace_a_tier():
     env = {k: v for k, v in FULL.items() if k != "LIGHT_LLM"}
-    env.update({"EDITOR_LLM": "openrouter/x", "FIGURE_PLANNER_LLM": "openrouter/y"})
+    env.update({"EDITOR_LLM": "openrouter/x", "FIGURE_PLANNER_LLM": "openrouter/y", "FACT_CHECKER_LLM": "openrouter/z"})
     assert missing_settings(env) == []
 
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from core.config import SIZE_PRESETS, today_iso
 from core.registry import SourceRegistry, normalize_citations
+from report.claims import check_claims
 from report.validators import count_words, strip_references, word_status
 
 LLMFn = Callable[[str], str]
@@ -33,6 +34,7 @@ class WrittenReport:
     status: str
     unknown_citations: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    claims: list[dict] = field(default_factory=list)
 
 
 def _source_ids(registry: SourceRegistry) -> str:
@@ -42,7 +44,9 @@ def _source_ids(registry: SourceRegistry) -> str:
 
 # Shared by every writing prompt. gpt-oss defaults to dense consultant prose with bold labels and
 # 【S#】 citations; it also has no idea of today's date unless told.
-STYLE = """Today is {today}. Write for an informed reader who is not a specialist:
+STYLE = """Today is {today}. Use only facts that are in the findings and analysis below: never add
+names, dates, numbers or other details from memory, even ones you believe are true.
+Write for an informed reader who is not a specialist:
 - plain language, short sentences, active voice; explain each acronym the first time it appears
 - give numbers with units, currency and the year they refer to; say when evidence is old, thin or disputed
 - no filler, hype or wrap-up lines such as "In summary"; no bold "Key takeaway" labels in every section
@@ -209,6 +213,7 @@ def write_report(
     edit_llm: LLMFn | None = None,
     parallelism: int | None = None,
     today: str | None = None,
+    check_llm: LLMFn | None = None,
 ) -> WrittenReport:
     """`llm` writes the prose sections; `edit_llm` (a lighter model) does the outline, length
     adjustment and citation repair. Without `edit_llm`, `llm` does everything.
@@ -307,6 +312,18 @@ def write_report(
         if report.unknown:  # only note ids the repair pass did not fix
             notes.append(f"Removed citations to unknown sources: {', '.join(report.unknown)}")
 
+    # Claim check: compare each cited statement with its sources' saved text; reword or drop the
+    # ones they do not support. Fixes are validated like any other text, so no source can be invented.
+    claims: list[dict] = []
+    if check_llm is not None:
+        try:
+            text, checked, note = check_claims(text, registry, check_llm, workers=workers)
+            text = registry.validate_citations(text).cleaned
+            claims = [c.to_dict() for c in checked]
+            notes.append(note)
+        except Exception as exc:  # the check is a safeguard; it must never cost the report
+            notes.append(f"Claim check failed and was skipped: {exc}")
+
     words = count_words(text)
     status = word_status(words, preset)
     if status != "ok":
@@ -320,4 +337,5 @@ def write_report(
     final = text.rstrip() + "\n\n" + registry.references_markdown(cited=sorted(cited))
     if notes:
         final += "\n## Coverage notes\n\n" + "\n".join(f"- {n}" for n in notes) + "\n"
-    return WrittenReport(markdown=final, words=words, status=status, unknown_citations=unknown, notes=notes)
+    return WrittenReport(markdown=final, words=words, status=status, unknown_citations=unknown, notes=notes,
+                         claims=claims)

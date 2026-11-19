@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -289,3 +290,20 @@ def test_cli_prints_notes_the_console_cannot_encode(monkeypatch, capsys):
     assert cli.main(["--topic", "t"]) == 0
     cli.sys.stdout.flush()
     assert b"Diagram left out: agentic?AI" in raw.getvalue()
+
+
+def test_claim_check_results_are_saved_with_the_run(tmp_path):
+    rec = Recorder()
+
+    def research(plan, ctx):
+        ctx.registry.add("https://a.com", "Alpha", "web", "read_page", content="Alpha says word word.")
+        return "findings"
+
+    deps = rec.deps(llm=ScriptedLLM(outline=_outline(), body_suffix="Claim [S1]."))
+    deps.research = research
+    deps.check_llm = lambda prompt: json.dumps(
+        [{"id": int(i), "verdict": "supported", "fix": ""} for i in re.findall(r"^STATEMENT (\d+):", prompt, re.M)])
+    result = ResearchFlow("topic", deps=deps, base_dir=tmp_path).run()
+    saved = json.loads((result.run_dir / "claims.json").read_text(encoding="utf-8"))
+    assert saved and saved[0]["verdict"] == "supported"
+    assert any(n.startswith("Claim check:") for n in result.notes)

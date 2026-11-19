@@ -34,6 +34,8 @@ class Source(BaseModel):
     authors: list[str] = Field(default_factory=list)
     retrieved_at: str
     content_path: str | None = None
+    # How much of the source was actually read: full_text, abstract, snippet, metadata or dataset.
+    depth: str | None = None
 
 
 class FigureSpec(BaseModel):

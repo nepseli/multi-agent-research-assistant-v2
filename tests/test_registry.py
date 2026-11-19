@@ -116,3 +116,66 @@ def test_cited_ids_and_validation_read_fullwidth_citations(tmp_path):
     assert SourceRegistry.cited_ids("x 【S1】 y 【S9】") == ["S1", "S9"]
     report = r.validate_citations("x 【S1】 y 【S9】.")
     assert report.unknown == ["S9"] and report.cleaned == "x [S1] y."
+
+
+# -- source depth --------------------------------------------------------------
+
+def test_reading_a_page_found_by_search_keeps_the_full_text(tmp_path):
+    # The usual path: a page is first a search hit (snippet), then the agent reads it.
+    r = _reg(tmp_path)
+    hit = r.add("https://a.com/x", "A", "web", "web_search", content="short snippet")
+    read = r.add("https://a.com/x/", "A", "web", "read_page", content="the whole article " * 50)
+    assert read.id == hit.id
+    assert read.depth == "full_text" and read.tool == "read_page"
+    assert "whole article" in r.content(read.id)
+
+
+def test_a_shallower_add_never_replaces_deeper_text(tmp_path):
+    r = _reg(tmp_path)
+    r.add("https://a.com/x", "A", "web", "read_page", content="the whole article")
+    again = r.add("https://a.com/x", "A", "web", "web_search", content="short snippet")
+    assert again.depth == "full_text" and r.content(again.id) == "the whole article"
+
+
+def test_parsed_pdf_upgrades_the_paper_found_by_academic_search(tmp_path):
+    r = _reg(tmp_path)
+    paper = r.add("https://doi.org/10.1/x", "Paper", "paper", "academic_search", doi="10.1/x", content="abstract")
+    pdf = r.add("https://host/x.pdf", "10.1/x", "pdf", "read_open_access_pdf", doi="10.1/x", content="full paper text")
+    assert pdf.id == paper.id and pdf.depth == "full_text"
+    assert pdf.title == "Paper"  # the readable title is kept, not the DOI
+    assert r.content(pdf.id) == "full paper text"
+
+
+def test_depth_from_tool_and_old_sources_json_still_loads(tmp_path):
+    import json
+
+    r = _reg(tmp_path)
+    assert r.add("https://a.com", "A", "web", "web_search", content="s").depth == "snippet"
+    assert r.add("https://d.org/1", "P", "paper", "academic_search", doi="10.2/y", content="abs").depth == "abstract"
+    assert r.add("https://d.org/2", "P2", "paper", "academic_search").depth == "metadata"
+    assert r.add("https://api.openalex.org/w", "Counts", "dataset", "openalex").depth == "dataset"
+    r.save()
+    data = json.loads((tmp_path / "sources.json").read_text(encoding="utf-8"))
+    for item in data:
+        item.pop("depth")  # a run saved before depth existed
+    (tmp_path / "sources.json").write_text(json.dumps(data), encoding="utf-8")
+    fresh = _reg(tmp_path)
+    fresh.load()
+    assert [s.depth for s in fresh.all()] == ["snippet", "abstract", "metadata", "dataset"]
+
+
+def test_references_say_how_deeply_each_source_was_read(tmp_path):
+    r = _reg(tmp_path)
+    r.add("https://a.com", "Read page", "web", "read_page", content="text")
+    r.add("https://b.com", "Search hit", "web", "web_search", content="snippet")
+    r.add("https://d.org/1", "Paper", "paper", "academic_search", doi="10.2/y", content="abs")
+    refs = r.references_markdown()
+    assert "Read page" in refs and "(read in full)" in refs.split("\n")[2]
+    assert "(search snippet only)" in refs.split("\n")[3]
+    assert "(abstract only)" in refs.split("\n")[4]
+
+
+def test_content_is_empty_for_a_source_without_text(tmp_path):
+    r = _reg(tmp_path)
+    src = r.add("https://a.com", "A", "web", "web_search")
+    assert r.content(src.id) == "" and r.content("S99") == ""

@@ -106,6 +106,13 @@ def _research_description(plan: ResearchPlan) -> str:
         steps.append("This is a simple question: one or two searches are enough. Keep the answer short.")
     else:
         steps.append("Search first, then read the most relevant and most authoritative pages.")
+        if b.max_pages > 0:
+            # Live runs read 2 of 8 allowed pages and built whole reports on 150-character snippets.
+            steps.append(
+                f"Read at least {min(5, b.max_pages)} pages in full. A search snippet only shows that a page "
+                "exists: report a number, date, name or other detail only if you read it on a page or in an "
+                "abstract, never from the snippet alone."
+            )
     if plan.use_academic:
         steps.append(
             "Also use academic_search for journals, proceedings and preprints, and read_open_access_pdf "
@@ -186,4 +193,6 @@ def default_deps(pdf: bool = False, worker_url: str | None = None) -> FlowDeps:
         worker=worker,
         figure_llm=make_llm_fn("figure_planner", pdf),
         edit_llm=make_llm_fn("editor", pdf),
+        check_llm=None if os.getenv("CLAIM_CHECK", "on").strip().lower() in ("off", "0", "false", "no")
+        else make_llm_fn("fact_checker", pdf),
     )

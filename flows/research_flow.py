@@ -42,6 +42,7 @@ class FlowDeps:
     worker: object
     figure_llm: LLMFn | None = None
     edit_llm: LLMFn | None = None  # outline, length adjustment and citation repair; defaults to llm
+    check_llm: LLMFn | None = None  # claim check against source text; None skips it
     year_counts: Callable[[str, str | None], dict[int, int]] | None = None
 
 
@@ -253,7 +254,10 @@ class ResearchFlow(Flow[_State]):
             pdf=self.pdf,
             notes=self.notes,
             extra_cited=[sid for spec, _ in self.figures for sid in spec.source_ids],
+            check_llm=self.deps.check_llm,
         )
+        if written.claims:  # every checked statement, its verdict and any fix, for review
+            (self.ctx.run_dir / "claims.json").write_text(json.dumps(written.claims, indent=2), encoding="utf-8")
         md_path = self.ctx.run_dir / f"{self.ctx.report_stem}.md"
         md_path.write_text(written.markdown, encoding="utf-8")
         self.ctx.registry.save()

@@ -55,6 +55,26 @@ def _norm_doi(doi: str | None) -> str | None:
     return d or None
 
 
+# Deeper reads replace shallower ones: a page is usually a search hit (snippet) before it is read.
+_DEPTH_RANK = {"metadata": 0, "snippet": 1, "abstract": 2, "dataset": 2, "full_text": 3}
+_DEPTH_LABEL = {
+    "full_text": "read in full",
+    "abstract": "abstract only",
+    "snippet": "search snippet only",
+    "metadata": "title only",
+}
+
+
+def _depth_for(tool: str, kind: str, has_content: bool) -> str:
+    if tool in ("read_page", "read_open_access_pdf"):
+        return "full_text"
+    if kind == "dataset" or tool == "openalex":
+        return "dataset"
+    if tool == "academic_search":
+        return "abstract" if has_content else "metadata"
+    return "snippet"
+
+
 class SourceRegistry:
     """Per-run record of every source a tool retrieved. Citations resolve against it."""
 
@@ -82,10 +102,14 @@ class SourceRegistry:
         url_key = _norm_url(url)
         existing_id = self._by_key.get(f"doi:{doi_key}") if doi_key else None
         existing_id = existing_id or self._by_key.get(f"url:{url_key}")
+        depth = _depth_for(tool, kind, bool(content))
         if existing_id:
             source = self.get(existing_id)
-            if content and not source.content_path:
+            deeper = _DEPTH_RANK[depth] > _DEPTH_RANK.get(source.depth or "metadata", 0)
+            if content and (deeper or not source.content_path):
                 source.content_path = self._write_content(source.id, content)
+            if deeper:
+                source.depth, source.tool = depth, tool
             return source
 
         sid = self._next_id()
@@ -100,6 +124,7 @@ class SourceRegistry:
             authors=authors or [],
             retrieved_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             content_path=self._write_content(sid, content) if content else None,
+            depth=depth,
         )
         self._sources.append(source)
         self._by_key[f"url:{url_key}"] = sid
@@ -117,6 +142,16 @@ class SourceRegistry:
     def get(self, sid: str) -> Source | None:
         return next((s for s in self._sources if s.id == sid), None)
 
+    def content(self, sid: str) -> str:
+        """The saved text of a source (page, abstract or snippet), or "" when there is none."""
+        source = self.get(sid)
+        if not source or not source.content_path:
+            return ""
+        try:
+            return Path(source.content_path).read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
     def all(self) -> list[Source]:
         return list(self._sources)
 
@@ -132,6 +167,8 @@ class SourceRegistry:
         self._sources = [Source(**item) for item in json.loads(path.read_text(encoding="utf-8"))]
         self._by_key = {}
         for s in self._sources:
+            if s.depth is None:  # saved before depth was recorded
+                s.depth = _depth_for(s.tool, s.kind, bool(s.content_path))
             self._by_key[f"url:{_norm_url(s.url)}"] = s.id
             if s.doi:
                 self._by_key[f"doi:{s.doi}"] = s.id
@@ -172,7 +209,8 @@ class SourceRegistry:
             if s.doi:
                 parts.append(f"doi:{s.doi}")
             parts.append(s.url)
-            lines.append(". ".join(parts) + "  ")
+            label = _DEPTH_LABEL.get(s.depth or "")
+            lines.append(". ".join(parts) + (f" ({label})" if label else "") + "  ")
         if len(lines) == 2:
             lines.append("No sources were cited in this report.")
         return "\n".join(lines) + "\n"

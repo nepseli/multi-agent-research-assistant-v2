@@ -10,11 +10,11 @@ from tests.fakes import FakeWorker
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch):
-    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER"):
+    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER", "FACT_CHECKER"):
         for suffix in ("_LLM", "_TEMP", "_LLM_PDF", "_TEMP_PDF"):
             monkeypatch.delenv(prefix + suffix, raising=False)
     for name in ("STRONG_LLM_PDF", "LIGHT_LLM_PDF", "STRONG_REASONING", "LIGHT_REASONING", "FIGURE_PLANNER_REASONING", "EDITOR_REASONING",
-                 "OPENROUTER_SORT", "STRONG_MAX_PRICE", "LIGHT_MAX_PRICE"):
+                 "OPENROUTER_SORT", "STRONG_MAX_PRICE", "LIGHT_MAX_PRICE", "CLAIM_CHECK"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("STRONG_LLM", "openrouter/openai/gpt-oss-120b")
     monkeypatch.setenv("LIGHT_LLM", "openrouter/openai/gpt-oss-20b")
@@ -119,3 +119,14 @@ def test_router_prompt_knows_the_date_so_queries_are_not_stale(monkeypatch):
     monkeypatch.setattr(factories, "today_iso", lambda: "2026-11-19")
     prompt = factories.router_prompt("agentic AI in Singapore")
     assert "2026-11-19" in prompt and "year" in prompt.lower()
+
+
+def test_default_deps_include_a_fact_checker_unless_switched_off(monkeypatch):
+    assert factories.default_deps().check_llm is not None
+    monkeypatch.setenv("CLAIM_CHECK", "off")
+    assert factories.default_deps().check_llm is None
+
+
+def test_research_prompt_asks_to_read_pages_not_rely_on_snippets():
+    text = factories._research_description(_plan(1))
+    assert "Read at least" in text and "snippet" in text.lower()
