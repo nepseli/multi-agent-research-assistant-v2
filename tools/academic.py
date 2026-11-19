@@ -82,10 +82,16 @@ def search_openalex(query: str, limit: int = 10, email: str | None = None) -> li
     return out
 
 
+def _arxiv_query(query: str) -> str:
+    # "all:a b c" lets arXiv match any one word, which pulled in off-topic papers; require every term.
+    terms = re.findall(r"[\w\-]+", query)
+    return " AND ".join(f"all:{t}" for t in terms) or f"all:{query}"
+
+
 def search_arxiv(query: str, limit: int = 10) -> list[dict]:
     resp = _request(
         "https://export.arxiv.org/api/query",
-        {"search_query": f"all:{query}", "start": 0, "max_results": limit},
+        {"search_query": _arxiv_query(query), "start": 0, "max_results": limit},
     )
     if resp is None:
         return []

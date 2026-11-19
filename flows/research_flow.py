@@ -135,6 +135,14 @@ class ResearchFlow(Flow[_State]):
         self._emit("route", "done")
         return "routed"
 
+    @staticmethod
+    def _without_worker_reads(plan: ResearchPlan) -> ResearchPlan:
+        """Take page and PDF reading away from the agent so it does not spend time and budget on a dead worker.
+        Tier 3 keeps page reads when Firecrawl can stand in for the worker."""
+        firecrawl = plan.tier == 3 and plan.budget.firecrawl_credits > 0 and bool(os.getenv("FIRECRAWL_API_KEY"))
+        budget = plan.budget.model_copy(update={"max_pdfs": 0, **({} if firecrawl else {"max_pages": 0})})
+        return plan.model_copy(update={"budget": budget, "use_pdf_parsing": False})
+
     @listen(step_route)
     def step_research(self):
         self._check()
@@ -143,6 +151,9 @@ class ResearchFlow(Flow[_State]):
         if plan.budget.max_pages > 0:
             health = self.deps.worker.health()
             if not health.get("ok"):
+                plan = self._without_worker_reads(plan)
+                self.plan = plan
+                (ctx.run_dir / "plan.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
                 self._note(
                     "Worker unavailable: pages and PDFs could not be read; this report relies on "
                     "search snippets and abstracts."
@@ -192,14 +203,18 @@ class ResearchFlow(Flow[_State]):
             return
         data_dir = ctx.run_dir / "data"
         email = os.getenv("OPENALEX_EMAIL") or os.getenv("UNPAYWALL_EMAIL")
+        data_sources: dict[str, str] = {}
         if self.plan.use_academic:
-            build_bibliometric_tables(self.topic, data_dir, email, counts_fn=deps.year_counts)
+            build_bibliometric_tables(
+                self.topic, data_dir, email, counts_fn=deps.year_counts,
+                registry=ctx.registry, data_sources=data_sources,
+            )
         preset = SIZE_PRESETS[self.size]
         specs = plan_figures(
             deps.figure_llm, self.findings, self.analysis, describe_tables(data_dir) if data_dir.exists() else [],
             (preset.figures_min, preset.figures_max),
         )
-        ok, reasons = validate_specs(specs, data_dir, ctx.registry) if specs else ([], [])
+        ok, reasons = validate_specs(specs, data_dir, ctx.registry, data_sources) if specs else ([], [])
         for reason in reasons:
             self._note(f"Figure skipped: {reason}")
         fig_dir = ctx.run_dir / "figures"
@@ -224,6 +239,7 @@ class ResearchFlow(Flow[_State]):
             llm=self.deps.llm,
             pdf=self.pdf,
             notes=self.notes,
+            extra_cited=[sid for spec, _ in self.figures for sid in spec.source_ids],
         )
         md_path = self.ctx.run_dir / f"{self.ctx.report_stem}.md"
         md_path.write_text(written.markdown, encoding="utf-8")

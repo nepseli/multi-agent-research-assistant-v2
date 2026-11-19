@@ -99,6 +99,13 @@ def test_arxiv_parses_atom():
 
 
 @respx.mock
+def test_arxiv_requires_every_query_term():
+    route = respx.get("https://export.arxiv.org/api/query").mock(return_value=httpx.Response(200, text=ARXIV))
+    search_arxiv('glass "substrate" 2023 review')
+    assert route.calls[0].request.url.params["search_query"] == "all:glass AND all:substrate AND all:2023 AND all:review"
+
+
+@respx.mock
 def test_crossref_normalises_fields():
     respx.get("https://api.crossref.org/works").mock(return_value=httpx.Response(200, json=CROSSREF))
     [r] = search_crossref("strain")

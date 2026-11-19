@@ -8,6 +8,16 @@ from urllib.parse import urlsplit, urlunsplit
 from core.models import Source
 
 _CITE = re.compile(r"\[(S\d+)\]")
+# "[S1, S4]" or "[S1; S4]": models often group ids; split them so each id is validated.
+_GROUP = re.compile(r"\[\s*(S\d+(?:\s*[,;]\s*S\d+)+)\s*\]")
+
+
+def _split_groups(text: str) -> str:
+    return _GROUP.sub(lambda m: ", ".join(f"[{i}]" for i in re.split(r"\s*[,;]\s*", m.group(1))), text)
+
+
+def _id_key(sid: str) -> int:
+    return int(sid[1:])
 
 
 @dataclass
@@ -67,7 +77,7 @@ class SourceRegistry:
         source = Source(
             id=sid,
             url=url,
-            title=title,
+            title=(title or "").strip() or doi_key or url,
             kind=kind,
             tool=tool,
             doi=doi_key,
@@ -111,19 +121,34 @@ class SourceRegistry:
             if s.doi:
                 self._by_key[f"doi:{s.doi}"] = s.id
 
+    @staticmethod
+    def cited_ids(text: str) -> list[str]:
+        """Every [S#] id cited in the text, grouped citations included, sorted by number."""
+        return sorted(set(_CITE.findall(_split_groups(text))), key=_id_key)
+
     def validate_citations(self, text: str) -> CitationReport:
+        text = _split_groups(text)
         known = {s.id for s in self._sources}
         unknown: list[str] = []
         for cid in _CITE.findall(text):
             if cid not in known and cid not in unknown:
                 unknown.append(cid)
-        cleaned = _CITE.sub(lambda m: m.group(0) if m.group(1) in known else "", text)
+        # An unknown id takes its leading ", " with it, so "[S1], [S99]" becomes "[S1]".
+        cleaned = re.sub(
+            r"(?:[ \t]*,[ \t]*)?\[(S\d+)\]",
+            lambda m: m.group(0) if m.group(1) in known else "",
+            text,
+        )
         cleaned = re.sub(r"[ \t]+([.,;:])", r"\1", cleaned)
         return CitationReport(unknown=unknown, cleaned=cleaned)
 
-    def references_markdown(self) -> str:
+    def references_markdown(self, cited: list[str] | None = None) -> str:
+        """Reference list. With `cited`, only those sources are listed, so retrieved-but-unused hits stay out."""
+        wanted = set(cited) if cited is not None else None
         lines = ["## References", ""]
         for s in self._sources:
+            if wanted is not None and s.id not in wanted:
+                continue
             parts = [f"[{s.id}] {s.title}"]
             if s.authors:
                 parts.append(", ".join(s.authors))
@@ -133,4 +158,6 @@ class SourceRegistry:
                 parts.append(f"doi:{s.doi}")
             parts.append(s.url)
             lines.append(". ".join(parts) + "  ")
+        if len(lines) == 2:
+            lines.append("No sources were cited in this report.")
         return "\n".join(lines) + "\n"

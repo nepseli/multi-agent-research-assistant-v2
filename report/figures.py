@@ -4,6 +4,7 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlencode
 
 from pydantic import ValidationError
 
@@ -43,7 +44,9 @@ def _is_number(value: str) -> bool:
         return False
 
 
-def validate_specs(specs: list[FigureSpec], data_dir: Path, registry: SourceRegistry) -> tuple[list[FigureSpec], list[str]]:
+def validate_specs(
+    specs: list[FigureSpec], data_dir: Path, registry: SourceRegistry, data_sources: dict[str, str] | None = None
+) -> tuple[list[FigureSpec], list[str]]:
     data_dir = Path(data_dir).resolve()
     known = {s.id for s in registry.all()}
     ok: list[FigureSpec] = []
@@ -67,12 +70,23 @@ def validate_specs(specs: list[FigureSpec], data_dir: Path, registry: SourceRegi
         if not all(_is_number(r.get(spec.y) or "") for r in rows):
             reasons.append(f"{spec.title}: column {spec.y} is not numeric")
             continue
-        unknown = [s for s in spec.source_ids if s not in known]
-        if unknown:
-            reasons.append(f"{spec.title}: unknown source id {', '.join(unknown)}")
-            continue
-        ok.append(spec)
+        # The data is real, so a bad citation should not cost the chart: drop unknown ids
+        # and cite the source the data file actually came from.
+        ids = [s for s in spec.source_ids if s in known]
+        origin = _data_origin(spec.data_ref, data_sources or {})
+        if origin in known and origin not in ids:
+            ids.insert(0, origin)
+        ok.append(spec.model_copy(update={"source_ids": ids}))
     return ok, reasons
+
+
+def _data_origin(data_ref: str, data_sources: dict[str, str]) -> str | None:
+    """Source id a data file came from: an explicit mapping, or the S#_tableN.csv naming used for PDF tables."""
+    name = Path(data_ref).name
+    if name in data_sources:
+        return data_sources[name]
+    match = re.match(r"(S\d+)_table\d+\.csv$", name)
+    return match.group(1) if match else None
 
 
 def describe_tables(data_dir: Path) -> list[str]:
@@ -112,7 +126,15 @@ def plan_figures(llm: LLMFn, findings: str, analysis: str, tables: list[str], co
     return specs
 
 
-def build_bibliometric_tables(topic: str, data_dir: Path, email: str | None, counts_fn: CountsFn | None = None) -> list[str]:
+def build_bibliometric_tables(
+    topic: str,
+    data_dir: Path,
+    email: str | None,
+    counts_fn: CountsFn | None = None,
+    registry: SourceRegistry | None = None,
+    data_sources: dict[str, str] | None = None,
+) -> list[str]:
+    """Write papers_per_year.csv from OpenAlex. With a registry, the query is recorded as a citable source."""
     if counts_fn is None:
         from tools.academic import openalex_year_counts as counts_fn
     try:
@@ -128,4 +150,9 @@ def build_bibliometric_tables(topic: str, data_dir: Path, email: str | None, cou
         w.writerow(["year", "papers"])
         for year in sorted(counts):
             w.writerow([year, counts[year]])
+    if registry is not None:
+        url = "https://api.openalex.org/works?" + urlencode({"search": topic, "group_by": "publication_year"})
+        src = registry.add(url, f'OpenAlex: publications per year matching "{topic}"', "dataset", "openalex")
+        if data_sources is not None:
+            data_sources["papers_per_year.csv"] = src.id
     return ["papers_per_year.csv"]

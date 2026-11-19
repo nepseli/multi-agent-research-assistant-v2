@@ -22,6 +22,7 @@ class _Counters:
     pdfs: int = 0
     credits: int = 0
     oa_urls: dict[str, str] = field(default_factory=dict)  # doi -> open-access PDF URL
+    dead_ends: set[str] = field(default_factory=set)  # URLs/DOIs that already failed; agents tend to retry them
 
 
 def serper_search(query: str) -> list[dict]:
@@ -108,6 +109,9 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
         @stoppable
         def read_page(url: str) -> str:
             """Open a web page and return its main text as Markdown, tagged with its [S#] source id."""
+            url = url.strip()
+            if url in counters.dead_ends:
+                return f"Already tried {url} and it failed; do not retry it. Use search snippets instead."
             if counters.pages >= budget.max_pages:
                 return exhausted("pages")
             counters.pages += 1
@@ -117,6 +121,7 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
                 ctx.log("firecrawl_fallback", url=url)
                 result = fc_fn(url, fc_key)
             if not result.get("ok"):
+                counters.dead_ends.add(url)
                 ctx.log("read_failed", url=url, error=result.get("error"))
                 return f"FAILED to read {url}: {result.get('error')}. Use search snippets instead."
             title = result.get("title") or url
@@ -158,19 +163,24 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
         @stoppable
         def read_open_access_pdf(doi_or_url: str) -> str:
             """Parse an open-access paper PDF (by DOI or direct PDF URL) into Markdown. Paywalled papers are not fetched."""
-            if counters.pdfs >= budget.max_pdfs:
-                return exhausted("pdfs")
             ident = doi_or_url.strip()
             doi = None if ident.startswith("http") else ident.lower()
+            key = doi or ident
+            if key in counters.dead_ends:
+                return f"Already tried {ident}: no readable open-access copy. Do not retry; rely on the abstract."
+            if counters.pdfs >= budget.max_pdfs:
+                return exhausted("pdfs")
             url = ident if ident.startswith("http") else counters.oa_urls.get(doi or "")
             if not url and doi and email:
                 url = unpaywall_fn(doi, email)
             if not url:
+                counters.dead_ends.add(key)
                 ctx.log("no_open_access", ident=ident)
                 return f"No open-access copy found for {ident}; rely on the abstract only."
             counters.pdfs += 1
             result = worker.parse_pdf(url)
             if not result.get("ok"):
+                counters.dead_ends.add(key)
                 ctx.log("read_failed", url=url, error=result.get("error"))
                 return f"FAILED to parse {url}: {result.get('error')}. Rely on the abstract."
             src = ctx.registry.add(url, doi or url, "pdf", "read_open_access_pdf", doi=doi, content=result["markdown"])

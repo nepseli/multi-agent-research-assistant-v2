@@ -40,10 +40,22 @@ def test_validate_specs_rejects_single_row_and_missing_columns(tmp_path):
     assert ok == [] and len(reasons) == 2
 
 
-def test_validate_specs_rejects_unknown_source_id(tmp_path):
+def test_validate_specs_drops_unknown_source_ids_but_keeps_figure(tmp_path):
     _csv(tmp_path / "papers_per_year.csv", [["year", "papers"], ["2020", "3"], ["2021", "4"]])
-    ok, reasons = validate_specs([_spec(source_ids=["S99"])], tmp_path, _reg(tmp_path))
-    assert ok == [] and "S99" in reasons[0]
+    ok, reasons = validate_specs([_spec(source_ids=["S1", "S99", "papers_per_year.csv"])], tmp_path, _reg(tmp_path))
+    assert len(ok) == 1 and ok[0].source_ids == ["S1"]
+    assert reasons == []
+
+
+def test_validate_specs_attaches_data_file_sources(tmp_path):
+    reg = _reg(tmp_path)
+    reg.add("https://b.com", "B", "paper", "read_open_access_pdf")
+    _csv(tmp_path / "papers_per_year.csv", [["year", "papers"], ["2020", "3"], ["2021", "4"]])
+    _csv(tmp_path / "S2_table1.csv", [["year", "papers"], ["2020", "3"], ["2021", "4"]])
+    specs = [_spec(), _spec(data_ref="S2_table1.csv")]
+    ok, _ = validate_specs(specs, tmp_path, reg, data_sources={"papers_per_year.csv": "S1"})
+    assert ok[0].source_ids == ["S1"]
+    assert ok[1].source_ids == ["S2"]
 
 
 def test_validate_specs_keeps_valid(tmp_path):
@@ -84,3 +96,13 @@ def test_bibliometric_table_skipped_when_no_counts(tmp_path):
 def test_describe_tables_lists_columns(tmp_path):
     _csv(tmp_path / "S1_table1.csv", [["year", "n"], ["2020", "3"]])
     assert describe_tables(tmp_path) == ["S1_table1.csv: year, n (1 rows)"]
+
+
+def test_bibliometric_table_registers_openalex_source(tmp_path):
+    reg = SourceRegistry(tmp_path)
+    data_sources = {}
+    build_bibliometric_tables("gan", tmp_path / "data", None, counts_fn=lambda q, e: {2020: 5, 2021: 9},
+                              registry=reg, data_sources=data_sources)
+    [src] = reg.all()
+    assert "openalex" in src.url and "gan" in src.title.lower()
+    assert data_sources == {"papers_per_year.csv": src.id}

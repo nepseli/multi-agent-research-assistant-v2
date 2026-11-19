@@ -209,3 +209,23 @@ def test_cancel_after_research_skips_analysis_and_writing(tmp_path):
     run_dir = err.value.run_dir
     assert (run_dir / "findings.md").exists()  # partial work is kept
     assert not list(run_dir.glob("*-report.md"))
+
+
+def test_worker_down_removes_page_and_pdf_reading_from_plan(tmp_path, monkeypatch):
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    rec = Recorder()
+    result = _flow(tmp_path, rec, worker=FakeWorker(healthy=False)).run()
+    plan = rec.plans[0]
+    assert plan.budget.max_pages == 0 and plan.budget.max_pdfs == 0
+    assert plan.use_pdf_parsing is False and plan.use_academic is True
+    saved = json.loads((result.run_dir / "plan.json").read_text(encoding="utf-8"))
+    assert saved["budget"]["max_pages"] == 0
+
+
+def test_pdf_figure_cites_openalex_and_it_is_referenced(tmp_path):
+    flow, _ = _pdf_flow(tmp_path)
+    result = flow.run()
+    md = result.markdown_path.read_text(encoding="utf-8")
+    spec, _ = flow.figures[0]
+    assert spec.source_ids
+    assert f"[{spec.source_ids[0]}] OpenAlex" in md

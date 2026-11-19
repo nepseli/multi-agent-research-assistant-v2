@@ -169,3 +169,30 @@ def test_tools_return_stopped_message_after_cancel(tmp_path):
     ctx.cancel.set()
     out = search.run(query="anything")
     assert "STOPPED" in out and calls == []
+
+
+def test_repeat_pdf_lookup_without_oa_copy_is_short_circuited(tmp_path):
+    calls = []
+
+    def no_oa(query, limit, settings):
+        item = _paper_search(query, limit, settings)[0]
+        item["oa_pdf_url"] = None
+        return [item]
+
+    ctx, t = _tools(tmp_path, _plan(2), academic_search=no_oa, email="me@x.org",
+                    unpaywall_pdf=lambda doi, email: calls.append(doi))
+    t["academic_search"].run(query="gan")
+    t["read_open_access_pdf"].run(doi_or_url="10.1/x")
+    out = t["read_open_access_pdf"].run(doi_or_url="10.1/X ")
+    assert "already tried" in out.lower()
+    assert calls == ["10.1/x"]
+
+
+def test_repeat_failed_page_read_does_not_spend_budget(tmp_path):
+    worker = FakeWorker(scrape={"ok": False, "error": "blocked"})
+    ctx, t = _tools(tmp_path, _plan(1, max_pages=2), worker)
+    t["read_page"].run(url="https://a.com/1")
+    assert "already tried" in t["read_page"].run(url="https://a.com/1").lower()
+    assert worker.scraped == ["https://a.com/1"]
+    t["read_page"].run(url="https://a.com/2")
+    assert worker.scraped == ["https://a.com/1", "https://a.com/2"]

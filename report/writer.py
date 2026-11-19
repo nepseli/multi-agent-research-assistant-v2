@@ -38,8 +38,25 @@ def _source_ids(registry: SourceRegistry) -> str:
     return ids or "(none)"
 
 
-def _clean_body(text: str) -> str:
-    return strip_references(text).strip()
+# Lines a model adds on its own: a second H1 title, or a "*Short report – 1 000 words*" banner.
+_H1 = re.compile(r"^#[ \t]+\S.*$")
+_WORD_BANNER = re.compile(r"^[ \t]*[*_]+[^*_\n]*\d[\d\s,.]*\s*words?\b[^*_\n]*[*_]+[ \t]*$", re.I)
+_RULE = re.compile(r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$")
+
+
+def _clean_body(text: str, topic: str = "") -> str:
+    lines = []
+    for line in strip_references(text).splitlines():
+        if _H1.match(line) or _WORD_BANNER.match(line):
+            continue
+        bold = re.fullmatch(r"[ \t]*\*\*(.+?)\*\*[ \t]*", line)
+        if topic and bold and bold.group(1).strip().lower() == topic.strip().lower():
+            continue  # the topic repeated as a bold title line
+        lines.append(line)
+    # Drop blank lines and horizontal rules left at the top once the title block is gone.
+    while lines and (not lines[0].strip() or _RULE.match(lines[0])):
+        lines.pop(0)
+    return "\n".join(lines).strip()
 
 
 def _parse_outline(raw: str, size: str, midpoint: int) -> list[dict]:
@@ -79,6 +96,7 @@ def write_report(
     llm: LLMFn,
     pdf: bool = False,
     notes: list[str] | None = None,
+    extra_cited: list[str] | None = None,
 ) -> WrittenReport:
     preset = SIZE_PRESETS[size]
     midpoint = (preset.words_min + preset.words_max) // 2
@@ -94,9 +112,9 @@ def write_report(
         headings = DEFAULT_HEADINGS["small"]
         raw = llm(
             f"SMALL_REQUEST\nWrite a short report with sections {headings}. {table_hint}"
-            f"Cite sources as [S#].\nTARGET_WORDS: {midpoint}\n\n{material}"
+            f"Cite sources as [S#]. Do not add a title, a word count or a references list.\nTARGET_WORDS: {midpoint}\n\n{material}"
         )
-        body = _clean_body(raw)
+        body = _clean_body(raw, topic)
         sections = [("Report", body)]
         text = f"# {topic}\n\n{body}"
     else:
@@ -113,15 +131,15 @@ def write_report(
             raw = llm(
                 f"SECTION_REQUEST\nHEADING: {item['heading']}\nTARGET_WORDS: {item['words']}\n"
                 f"{table_hint}Write only this section's body in Markdown, no heading line. "
-                f"Cite sources as [S#].\n\n{material}"
+                f"Cite sources as [S#]. Do not add a title, a word count or a references list.\n\n{material}"
             )
-            sections.append((item["heading"], _clean_body(raw)))
+            sections.append((item["heading"], _clean_body(raw, topic)))
         text = _assemble(topic, sections)
 
     # One expand-or-trim pass if the length is off target.
     if word_status(count_words(text), preset) != "ok":
         if size == "small":
-            fixed = _clean_body(llm(f"ADJUST_REQUEST\nRewrite to about the target length.\nTARGET_WORDS: {midpoint}\n\nTEXT:\n{sections[0][1]}"))
+            fixed = _clean_body(llm(f"ADJUST_REQUEST\nRewrite to about the target length.\nTARGET_WORDS: {midpoint}\n\nTEXT:\n{sections[0][1]}"), topic)
             sections = [("Report", fixed)]
             text = f"# {topic}\n\n{fixed}"
         else:
@@ -132,7 +150,7 @@ def write_report(
                     f"(expand with evidence from the material, or trim).\nTARGET_WORDS: {item['words']}\n\n"
                     f"{material}\nTEXT:\n{body}"
                 )
-                adjusted.append((heading, _clean_body(fixed)))
+                adjusted.append((heading, _clean_body(fixed, topic)))
             sections = adjusted
             text = _assemble(topic, sections)
 
@@ -145,10 +163,11 @@ def write_report(
             f"Valid sources: {ids}. Rewrite the text keeping its structure, replacing or removing "
             f"invalid citations.\n\nTEXT:\n{text}"
         )
-        text = _clean_body(repaired) if repaired.strip() else text
+        text = strip_references(repaired).strip() if repaired.strip() else text
         report = registry.validate_citations(text)
         text = report.cleaned
-        notes.append(f"Removed citations to unknown sources: {', '.join(unknown)}")
+        if report.unknown:  # only note ids the repair pass did not fix
+            notes.append(f"Removed citations to unknown sources: {', '.join(report.unknown)}")
 
     words = count_words(text)
     status = word_status(words, preset)
@@ -158,7 +177,9 @@ def write_report(
             f"target for a {size} report (tolerance 15%)."
         )
 
-    final = text.rstrip() + "\n\n" + registry.references_markdown()
+    # Reference only what the report actually cites (plus figure sources), not every search hit.
+    cited = set(registry.cited_ids(text)) | set(extra_cited or [])
+    final = text.rstrip() + "\n\n" + registry.references_markdown(cited=sorted(cited))
     if notes:
         final += "\n## Coverage notes\n\n" + "\n".join(f"- {n}" for n in notes) + "\n"
     return WrittenReport(markdown=final, words=words, status=status, unknown_citations=unknown, notes=notes)

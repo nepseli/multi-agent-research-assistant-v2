@@ -63,7 +63,7 @@ def test_short_report_gets_one_expand_pass_then_accepted(tmp_path):
 
 
 def test_references_generated_from_registry_not_llm(tmp_path):
-    llm = ScriptedLLM(outline=_outline(3), body_suffix="\n## References\n- FAKE REF FROM LLM")
+    llm = ScriptedLLM(outline=_outline(3), body_suffix="Claim [S1].\n## References\n- FAKE REF FROM LLM")
     out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
     assert "FAKE REF FROM LLM" not in out.markdown
     assert "[S1] Alpha Source" in out.markdown
@@ -82,3 +82,47 @@ def test_coverage_notes_appended(tmp_path):
     llm = ScriptedLLM(outline=_outline(3))
     out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm, notes=["Worker was down for 2 pages"])
     assert "## Coverage notes" in out.markdown and "Worker was down" in out.markdown
+
+
+def test_references_list_only_sources_cited_in_text(tmp_path):
+    r = _registry(tmp_path)
+    r.add("https://b.com", "Beta Uncited", "web", "web_search")
+    llm = ScriptedLLM(outline=_outline(3), body_suffix="Claim [S1].")
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=r, llm=llm)
+    assert "[S1] Alpha Source" in out.markdown
+    assert "Beta Uncited" not in out.markdown
+
+
+def test_extra_cited_ids_are_listed_in_references(tmp_path):
+    r = _registry(tmp_path)
+    r.add("https://openalex.org/q", "OpenAlex counts", "dataset", "openalex")
+    llm = ScriptedLLM(outline=_outline(3))
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=r, llm=llm, extra_cited=["S2"])
+    assert "[S2] OpenAlex counts" in out.markdown
+
+
+def test_model_added_title_and_word_count_lines_are_removed(tmp_path):
+    class TitleLLM(ScriptedLLM):
+        def __call__(self, prompt):
+            body = super().__call__(prompt)
+            return "# My Own Title\n\n**T**  \n*Short Report \u2013 1 000 words*\n\n---\n\n## Summary\n\n" + body
+
+    out = write_report(topic="T", findings="f", analysis="a", size="small", registry=_registry(tmp_path), llm=TitleLLM())
+    assert "My Own Title" not in out.markdown
+    assert "1 000 words" not in out.markdown
+    assert "**T**" not in out.markdown
+    assert out.markdown.startswith("# T\n\n## Summary")
+
+
+def test_no_removed_citation_note_when_repair_fixes_everything(tmp_path):
+    class FixingLLM(ScriptedLLM):
+        def __call__(self, prompt):
+            if prompt.startswith("REPAIR_REQUEST"):
+                self.calls.append("REPAIR_REQUEST")
+                return prompt.split("TEXT:\n", 1)[1].replace("[S99]", "[S1]")
+            return super().__call__(prompt)
+
+    llm = FixingLLM(outline=_outline(3), body_suffix="Claim [S1] and bogus [S99].")
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    assert llm.calls.count("REPAIR_REQUEST") == 1
+    assert not any("Removed citations" in n for n in out.notes)
