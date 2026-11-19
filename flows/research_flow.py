@@ -160,6 +160,16 @@ class ResearchFlow(Flow[_State]):
                     "Worker unavailable: pages and PDFs could not be read; this report relies on "
                     "search snippets and abstracts."
                 )
+            elif plan.use_pdf_parsing and health.get("parse_pdf") is False:
+                # The lean worker image is built without Docling: pages work, papers fall back to abstracts.
+                budget = plan.budget.model_copy(update={"max_pdfs": 0})
+                plan = plan.model_copy(update={"budget": budget, "use_pdf_parsing": False})
+                self.plan = plan
+                (ctx.run_dir / "plan.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+                self._note(
+                    "The worker has no PDF parser (lean image), so papers were read from their abstracts. "
+                    "Build the full worker to read open-access PDFs."
+                )
         try:
             self.findings = self.deps.research(plan, ctx)
         except Exception as exc:

@@ -2,6 +2,13 @@
 
 A CrewAI research workflow that first decides **how deeply** to search, then researches, analyses and writes a cited report in Markdown, with an optional professional PDF that includes tables, charts and diagrams.
 
+**See what you get:** a [sample report (PDF)](docs/sample/agentic-ai-singapore.pdf), also as [Markdown](docs/sample/agentic-ai-singapore.md). It is a medium, Tier 1 report on "Agentic AI landscape in Singapore", made in about 2.5 minutes for roughly US$0.04 of model usage.
+
+<p>
+  <img src="docs/sample/preview-page1.png" alt="First page of the sample report" width="49%">
+  <img src="docs/sample/preview-figures.png" alt="Figures page of the sample report" width="49%">
+</p>
+
 ## How it works
 
 `flows/research_flow.py` is a CrewAI Flow with these stages:
@@ -43,29 +50,49 @@ Choose **Auto** to let the router decide, or force a tier. PDF output and the Bi
 ├── flows/research_flow.py    # The Flow: route → research → analyse → figures → write → render
 ├── crews/factories.py        # Router, research and analyst crews, built per run
 ├── core/                     # config, models, plan budgets, source registry, run folders
-├── tools/                    # academic APIs, research tools, worker client
+├── tools/                    # academic APIs, research tools, worker client, setup check
 ├── report/                   # writer, validators, figures, charts, diagrams, PDF
 ├── worker/                   # Docker worker: Crawl4AI, Docling, Playwright PDF rendering
+├── docs/sample/              # sample report and the previews shown above
 ├── docker-compose.yml
 └── tests/
 ```
 
 Each run writes to `runs/<topic>-<timestamp>/`: `plan.json`, `findings.md`, `analysis.md`, `sources.json`, `sources/`, `data/`, `figures/`, `log.jsonl`, `<topic>-report.md` and `<topic>-report.pdf` (named after your topic).
 
-## Requirements
+## Quick start
 
-- Python 3.12 or newer and [uv](https://docs.astral.sh/uv/)
-- An [OpenRouter API key](https://openrouter.ai/settings/keys) and a [Serper API key](https://serper.dev/)
-- Docker, for page scraping, PDF parsing and PDF output (optional for Tier 0 Markdown reports)
+You need [uv](https://docs.astral.sh/uv/), an [OpenRouter API key](https://openrouter.ai/settings/keys) and a [Serper API key](https://serper.dev/) (Serper gives free search credits on sign-up). Docker is optional but needed to read web pages and papers and to produce the PDF.
 
-## Set up and run
+1. Install and add your keys:
 
-```bash
-uv sync
-cp .env.example .env        # then add your keys
-docker compose up -d --build   # starts the worker on 127.0.0.1:8000 (first build takes ~10 min; image is ~7.5 GB with Docling models)
-uv run streamlit run app.py
-```
+   ```bash
+   uv sync                     # Windows inside OneDrive: set UV_LINK_MODE=copy first
+   cp .env.example .env        # PowerShell: Copy-Item .env.example .env
+   ```
+
+   Then put `OPENROUTER_API_KEY` and `SERPER_API_KEY` in `.env`.
+
+2. Check the setup. This validates both keys, every configured model ID, that the price caps leave a host for each model, your Serper balance and the worker. It costs nothing; add `--live` to also send one tiny prompt to each model.
+
+   ```bash
+   uv run python main.py --check
+   ```
+
+3. Start the worker (optional). Pick one image:
+
+   | Image | Command | Size | What it adds |
+   |---|---|---|---|
+   | Full | `docker compose up -d --build` | ~6.2 GB, first build ~6-10 min | Reads web pages, parses open-access PDFs (Docling), draws diagrams, renders the PDF |
+   | Lean | `WORKER_DOCLING=0 docker compose up -d --build` (PowerShell: `$env:WORKER_DOCLING = "0"` first) | ~3.2 GB, first build ~4 min | Everything except parsing PDFs; papers fall back to their abstracts |
+
+   Without any worker, reports still work from search snippets and abstracts and say so in their coverage notes.
+
+4. Run the app:
+
+   ```bash
+   uv run streamlit run app.py
+   ```
 
 Command line:
 
@@ -74,8 +101,6 @@ uv run python main.py --topic "GaN power device defects" --size medium --pdf --t
 ```
 
 The **Stop** button cancels a run. It takes effect when the model call in progress finishes, and partial work stays in the run folder.
-
-Without the worker the app still runs: it falls back to search snippets and abstracts, and says so in the report's Coverage notes.
 
 ## Configuration
 

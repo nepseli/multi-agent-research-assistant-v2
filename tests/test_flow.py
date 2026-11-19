@@ -307,3 +307,12 @@ def test_claim_check_results_are_saved_with_the_run(tmp_path):
     saved = json.loads((result.run_dir / "claims.json").read_text(encoding="utf-8"))
     assert saved and saved[0]["verdict"] == "supported"
     assert any(n.startswith("Claim check:") for n in result.notes)
+
+
+def test_lean_worker_without_pdf_parser_keeps_pages_but_not_pdfs(tmp_path):
+    rec = Recorder()
+    result = _flow(tmp_path, rec, worker=FakeWorker(parse_pdf=False)).run()
+    plan = rec.plans[0]
+    assert plan.budget.max_pages > 0  # pages still work on the lean image
+    assert plan.budget.max_pdfs == 0 and plan.use_pdf_parsing is False
+    assert any("PDF parser" in n for n in result.notes)
