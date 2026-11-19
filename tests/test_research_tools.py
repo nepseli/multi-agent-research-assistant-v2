@@ -196,3 +196,24 @@ def test_repeat_failed_page_read_does_not_spend_budget(tmp_path):
     assert worker.scraped == ["https://a.com/1"]
     t["read_page"].run(url="https://a.com/2")
     assert worker.scraped == ["https://a.com/1", "https://a.com/2"]
+
+
+def test_agent_search_queries_lose_recent_past_years_the_topic_did_not_ask_for(tmp_path):
+    # The agent writes training-data years into its own queries ("Renovation Wave 2023") as well.
+    sent = []
+
+    def search(query):
+        sent.append(query)
+        return _serper(query)
+
+    def papers(query, limit, settings):
+        sent.append(query)
+        return _paper_search(query, limit, settings)
+
+    ctx, t = _tools(tmp_path, _plan(2), serper_search=search, academic_search=papers, year=2026)
+    t["web_search"].run(query="EU heat pump subsidy Renovation Wave 2023")
+    t["academic_search"].run(query="heat pump adoption 2021-2024 review")
+    t["web_search"].run(query="heat pump sales 2026")
+    assert sent == ["EU heat pump subsidy Renovation Wave", "heat pump adoption review", "heat pump sales 2026"]
+    log = (ctx.run_dir / "log.jsonl").read_text(encoding="utf-8")
+    assert "Renovation Wave 2023" in log  # what the agent asked for stays visible in the log

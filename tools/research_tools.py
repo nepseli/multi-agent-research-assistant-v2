@@ -3,11 +3,13 @@ import csv
 import functools
 import os
 from dataclasses import dataclass, field
+from datetime import date
 
 import httpx
 from crewai.tools import tool
 
 from core.models import ResearchPlan
+from core.planning import drop_stale_years
 from core.run_context import RunContext
 from tools import academic
 
@@ -68,6 +70,13 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
     fc_key = settings.get("firecrawl_api_key") or None
     fc_fn = settings.get("firecrawl_scrape", firecrawl_scrape)
     email = settings.get("email") or ""
+    year = settings.get("year") or date.today().year
+
+    def fresh(query: str) -> tuple[str, dict]:
+        """The agent adds training-data years ("... 2023") just like the router does; drop the ones the
+        topic did not ask for. Returns the query to send and, if it changed, what the agent asked."""
+        sent = drop_stale_years(query, plan.topic, year)
+        return sent, ({"asked": query} if sent != query else {})
 
     def exhausted(what: str) -> str:
         ctx.log("budget_exhausted", what=what)
@@ -90,6 +99,7 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
             return exhausted("searches")
         counters.searches += 1
         lines = []
+        query, asked = fresh(query)
         for item in search_fn(query):
             link = item.get("link") or item.get("url")
             if not link:
@@ -98,7 +108,7 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
             snippet = (item.get("snippet") or "")[:_SNIPPET_CHARS]
             src = ctx.registry.add(link, title, "web", "web_search", content=snippet or None)
             lines.append(f"[{src.id}] {title} — {link}\n    {snippet}")
-        ctx.log("web_search", query=query, results=len(lines))
+        ctx.log("web_search", query=query, results=len(lines), **asked)
         return "\n".join(lines) or "No results."
 
     tools = [web_search]
@@ -141,6 +151,7 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
                 return exhausted("searches")
             counters.searches += 1
             lines = []
+            query, asked = fresh(query)
             for p in academic_fn(query, 8, settings):
                 src = ctx.registry.add(
                     p["url"] or (f"https://doi.org/{p['doi']}" if p.get("doi") else p["title"]),
@@ -152,7 +163,7 @@ def build_tools(plan: ResearchPlan, ctx: RunContext, worker, settings: dict) -> 
                     counters.oa_urls[src.doi or p["doi"]] = p["oa_pdf_url"]
                 who = ", ".join(p.get("authors", [])[:3])
                 lines.append(f"[{src.id}] {p['title']} ({p.get('year')}) {who}\n    {(p.get('abstract') or '')[:_SNIPPET_CHARS]}")
-            ctx.log("academic_search", query=query, results=len(lines))
+            ctx.log("academic_search", query=query, results=len(lines), **asked)
             return "\n".join(lines) or "No papers found."
 
         tools.append(academic_search)

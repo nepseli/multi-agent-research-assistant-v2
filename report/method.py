@@ -30,7 +30,9 @@ def method_box(
     claims: list[dict],
     env: Mapping[str, str],
     today: str | None = None,
+    short: tuple[int, int, int] | None = None,
 ) -> str:
+    """`short` is (words, target minimum, target maximum) when the report came out under its size."""
     day = date.fromisoformat(today) if today else date.today()
     sources = registry.all()
     pages = sum(s.depth == "full_text" and s.kind == "web" for s in sources)
@@ -41,7 +43,8 @@ def method_box(
     parts = [
         f"Researched on {day.day} {day:%B %Y} as {TIER_NAMES.get(plan.tier, 'a topic')} (Tier {plan.tier}): "
         f"{_plural(searches, 'search')}{read_text}.",
-        f"{_plural(len(sources), 'source')} were found and {cited} are cited; each reference says how deeply it was read.",
+        f"{_plural(len(sources), 'source')} {'was' if len(sources) == 1 else 'were'} found and {cited} "
+        f"{'is' if cited == 1 else 'are'} cited; each reference says how deeply it was read.",
     ]
     checked = [c for c in claims if c.get("verdict") not in (None, "skipped")]
     if checked:
@@ -49,6 +52,12 @@ def method_box(
         parts.append(
             f"A claim check compared {_plural(len(checked), 'cited statement')} with the text of their sources; "
             f"{changed} were reworded or removed to match them."
+        )
+    if short:
+        words, lo, hi = short
+        parts.append(
+            f"At {words} words it is shorter than the {lo:,}-{hi:,} word target because the sources supported "
+            f"too little: only {cited} of {_plural(len(sources), 'source')} found back its statements."
         )
     strong, light = _model_name("writer", env), _model_name("fact_checker", env)
     models = f"{strong} (research and writing)" + (f" and {light} (editing and checks)" if light != strong else "")
