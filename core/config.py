@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
@@ -153,3 +154,8 @@ SIZE_PRESETS: dict[str, SizePreset] = {
     "medium": SizePreset(2000, 3000, 2, 3, 4),
     "big": SizePreset(5000, 7000, 4, 6, 8),
 }
+
+
+def today_iso() -> str:
+    """Today's date for prompts: models otherwise assume their training cutoff and search for stale years."""
+    return date.today().isoformat()

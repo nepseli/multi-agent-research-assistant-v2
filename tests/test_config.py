@@ -169,3 +169,11 @@ def test_role_reasoning_beats_tier_setting_which_beats_role_default():
     assert llm_options("figure_planner", env=_env(LIGHT_REASONING="high"))["reasoning_effort"] == "high"
     env = _env(LIGHT_REASONING="high", FIGURE_PLANNER_REASONING="low")
     assert llm_options("figure_planner", env=env)["reasoning_effort"] == "low"
+
+
+def test_today_iso_is_an_iso_date():
+    import re
+
+    from core.config import today_iso
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", today_iso())

@@ -87,3 +87,18 @@ def test_tier2_enables_academic_and_pdf_parsing():
     assert out.use_academic and out.use_pdf_parsing
     low = finalize_plan(_plan(1, use_academic=True), pdf=False, size="medium", forced_tier=None)
     assert not low.use_academic and not low.use_pdf_parsing
+
+
+def test_recent_past_years_are_dropped_from_router_queries():
+    # Models add years from their training data ("... 2024"), which skews search to stale results.
+    raw = json.dumps({"domain": "news", "tier": 1, "rationale": "x", "subqueries": [
+        "agentic AI companies Singapore 2024", "VC funding Singapore 2023-2025", "policy 2024\u20132026 outlook",
+        "AI strategy 2026", "history of AI 1956"]})
+    plan = parse_plan(raw, "agentic AI in Singapore", year=2026)
+    assert plan.subqueries == ["agentic AI companies Singapore", "VC funding Singapore", "policy 2024\u20132026 outlook",
+                               "AI strategy 2026", "history of AI 1956"]  # old years are deliberate history
+
+
+def test_years_the_topic_asks_for_are_kept():
+    raw = json.dumps({"domain": "news", "tier": 1, "rationale": "x", "subqueries": ["GPU shortage 2021 causes"]})
+    assert parse_plan(raw, "the 2021 GPU shortage", year=2026).subqueries == ["GPU shortage 2021 causes"]
