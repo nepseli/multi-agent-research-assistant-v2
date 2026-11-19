@@ -316,3 +316,65 @@ def test_lean_worker_without_pdf_parser_keeps_pages_but_not_pdfs(tmp_path):
     assert plan.budget.max_pages > 0  # pages still work on the lean image
     assert plan.budget.max_pdfs == 0 and plan.use_pdf_parsing is False
     assert any("PDF parser" in n for n in result.notes)
+
+
+def test_flow_streams_log_events_to_a_listener_with_the_budget(tmp_path):
+    rec = Recorder()
+    seen = []
+    flow = ResearchFlow("topic", deps=rec.deps(), base_dir=tmp_path, on_event=seen.append)
+    flow.run()
+    plan_event = next(e for e in seen if e["event"] == "plan")
+    assert {"max_searches", "max_pages", "max_pdfs"} <= set(plan_event)
+    assert any(e["event"] == "stage" for e in seen)
+
+
+class FakeMeter:
+    def __init__(self):
+        self.attached = self.detached = False
+
+    def attach(self):
+        self.attached = True
+
+    def detach(self):
+        self.detached = True
+
+    def totals(self):
+        return {"openai/gpt-oss-120b": {"calls": 3, "prompt_tokens": 1000, "completion_tokens": 100}}
+
+
+def test_run_saves_stage_times_and_token_usage(tmp_path, monkeypatch):
+    import core.usage
+
+    monkeypatch.setattr(core.usage, "_dearest_host_price", lambda model: None)
+    rec = Recorder()
+    deps = rec.deps()
+    deps.meter = FakeMeter()
+    result = ResearchFlow("topic", deps=deps, base_dir=tmp_path).run()
+    assert deps.meter.attached and deps.meter.detached
+    usage = json.loads((result.run_dir / "usage.json").read_text(encoding="utf-8"))
+    assert {"route", "research", "analyse", "write", "total"} <= set(usage["seconds"])
+    assert usage["models"]["openai/gpt-oss-120b"]["calls"] == 3
+    assert result.usage["seconds"]["total"] >= 0 and "model calls" in result.usage["summary"]
+
+
+def test_meter_is_detached_even_when_the_run_is_stopped(tmp_path):
+    import threading
+
+    from flows.research_flow import ResearchCancelled
+
+    rec = Recorder()
+    deps = rec.deps()
+    deps.meter = FakeMeter()
+    cancel = threading.Event()
+    cancel.set()
+    with pytest.raises(ResearchCancelled):
+        ResearchFlow("topic", deps=deps, base_dir=tmp_path, cancel=cancel).run()
+    assert deps.meter.detached
+
+
+def test_report_opens_with_how_it_was_made(tmp_path):
+    result = _flow(tmp_path, Recorder()).run()
+    md = result.markdown_path.read_text(encoding="utf-8")
+    first, rest = md.split("\n", 1)
+    assert first.startswith("# ")
+    assert rest.lstrip().startswith("> **How this report was made.**")

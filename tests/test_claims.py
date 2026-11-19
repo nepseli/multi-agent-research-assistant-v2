@@ -249,3 +249,11 @@ def test_prompt_treats_paraphrase_as_supported_and_short_snippets_as_unclear(tmp
     prompt = llm.prompts[0].lower()
     assert "paraphrase" in prompt and "summary" in prompt
     assert "snippet" in prompt and "unclear" in prompt
+
+
+def test_note_grammar_for_a_single_unverified_statement(tmp_path):
+    r = _registry(tmp_path)
+    r.add("https://y.com/a", "Snippet source", "web", "web_search", content="Manus is a firm.")
+    _, _, note = check_claims("# T\n\n## A\n\nManus has 300 staff [S3].\n", r,
+                              CheckLLM(lambda s: {"verdict": "unsupported", "fix": ""}))
+    assert "1 statement rests only on search snippets" in note and "it was left in" in note

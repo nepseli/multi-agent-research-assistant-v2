@@ -15,11 +15,16 @@ figure img { max-width: 100%; }
 figure.diagram pre.mermaid { margin: 0; }
 figure.diagram svg { max-width: 100% !important; max-height: 160mm; height: auto; }
 #figures-heading { break-after: avoid; page-break-after: avoid; }
+/* The "How this report was made" box under the title. */
+blockquote { margin: 6pt 0 14pt; padding: 8pt 12pt; background: #f4f7fb; border-left: 3px solid #1f4e79;
+             font-size: 9.5pt; color: #333; }
+blockquote p { margin: 0; }
+a.cite { color: #1f4e79; text-decoration: none; }
 .notes { font-size: 9pt; color: #555; border-top: 1px solid #ccc; margin-top: 18pt; }
 </style></head>
 <body>
 {{ body | safe }}
-{% if figures_html %}<h2 id="figures-heading">Figures</h2>{{ figures_html | safe }}{% endif %}
+{% if figures_html %}<section id="figures-section"><h2 id="figures-heading">Figures</h2>{{ figures_html | safe }}</section>{% endif %}
 {{ references | safe }}
 {% if notes %}<div class="notes"><h2>Coverage notes</h2><ul>{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
 </body></html>

@@ -215,3 +215,8 @@ def test_timeline_periods_must_be_in_order_and_distinct():
     repeated = "timeline\n 2025 : Sandbox\n 2026 : Framework\n 2026 : Funding"
     assert "2026" in size_problem(repeated) and "more than once" in size_problem(repeated)
     assert size_problem("timeline\n 2023 : Pilots\n Jan 2026 : Framework\n Jun 2026 : Update") is None
+
+
+def test_timeline_months_within_a_year_must_be_in_order_too():
+    assert "order" in size_problem("timeline\n 2025 : Sandbox\n Jun 2026 : MGF published\n May 2026 : MGF updated")
+    assert size_problem("timeline\n 2025 : Sandbox\n Jan 2026 : MGF published\n 20 May 2026 : MGF updated") is None

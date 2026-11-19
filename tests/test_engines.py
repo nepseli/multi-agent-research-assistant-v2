@@ -134,7 +134,8 @@ def test_timeline_layout_is_tightened():
 def test_figures_heading_removed_when_no_figure_is_left():
     from worker import engines
 
-    assert "figures-heading" in engines._MERMAID_BOOT
+    # Figures now sit in their sections; only the closing Figures section is removed when it empties.
+    assert "figures-section" in engines._MERMAID_BOOT
 
 
 def test_mindmap_branches_use_report_blues():

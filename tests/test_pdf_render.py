@@ -66,3 +66,52 @@ def test_figures_heading_has_an_id_for_the_renderer():
 def test_figures_heading_stays_with_the_first_figure():
     html = build_html(MD, [], ['<figure class="diagram"><pre class="mermaid">flowchart LR\nA-->B</pre></figure>'], "Title", [])
     assert "#figures-heading" in html and "break-after: avoid" in html
+
+
+# -- layout: figures by section, linked citations ------------------------------
+
+LAYOUT_MD = (
+    "# Title\n\n"
+    "## Funding and investment\n\nVenture funding for agent startups grew [S1].\n\n"
+    "## Policy\n\nThe governance framework sets rules [S2].\n\n"
+    "## References\n\n[S1] Alpha  \n[S2] Beta\n"
+)
+
+
+def _chart(title, caption):
+    return FigureSpec(kind="bar", title=title, data_ref="d.csv", x="x", y="y", caption=caption, source_ids=[])
+
+
+def _diagram(caption, code="flowchart LR\nA-->B"):
+    return f'<figure class="diagram"><pre class="mermaid">{code}</pre><figcaption>{caption}</figcaption></figure>'
+
+
+def test_figures_go_after_the_section_they_illustrate_and_are_numbered_in_reading_order(tmp_path):
+    figs = [(_chart("Governance framework rules", "Rules in the governance framework"), tmp_path / "fig1.svg")]
+    diagrams = [_diagram("Venture funding of agent startups")]
+    page = build_html(LAYOUT_MD, figs, diagrams, "Title", [])
+    funding, policy = page.index("Funding and investment"), page.index("<h2>Policy")
+    funding_fig = page.index("Venture funding of agent startups")
+    policy_fig = page.index("Rules in the governance framework")
+    assert funding < funding_fig < policy < policy_fig < page.index("References")
+    assert page.index("Figure 1.") < page.index("Figure 2.")  # numbered by position, not by list order
+    assert "Figure 1. Venture funding" in page
+    assert 'id="figures-section"' not in page  # nothing left over for an end section
+
+
+def test_a_figure_that_matches_no_section_goes_to_the_figures_section(tmp_path):
+    page = build_html(LAYOUT_MD, [], [_diagram("Weather patterns over oceans")], "Title", [])
+    assert page.index('id="figures-section"') < page.index("Weather patterns") < page.index("References")
+
+
+def test_citations_link_to_their_reference_entries():
+    page = build_html(LAYOUT_MD, [], [], "Title", [])
+    assert '<a class="cite" href="#ref-S1">[S1]</a>' in page
+    assert 'id="ref-S1"' in page and 'id="ref-S2"' in page
+    refs = page[page.index("References"):]
+    assert 'href="#ref-' not in refs  # the reference list itself is not linked to itself
+
+
+def test_method_box_is_styled_as_a_box():
+    page = build_html("# T\n\n> **How this report was made.** Searched.\n\n## A\n\nx\n", [], [], "T", [])
+    assert "<blockquote>" in page and "blockquote" in page.split("</style>")[0]

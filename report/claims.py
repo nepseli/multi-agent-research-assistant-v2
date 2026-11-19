@@ -268,8 +268,10 @@ def _note(claims: list[Claim]) -> str:
         f"{reworded} were reworded to match their sources and {removed} removed."
         + (f" {unchecked} could not be checked (the source's saved text was missing, too short or unrelated)."
            if unchecked else "")
-        + (f" {kept} statements rest only on search snippets too short to confirm them; they were left in, "
-           "unverified." if kept else "")
+        + ((" 1 statement rests only on search snippets too short to confirm it; it was left in, unverified."
+            if kept == 1 else
+            f" {kept} statements rest only on search snippets too short to confirm them; they were left in, "
+            "unverified.") if kept else "")
     )
 
 

@@ -46,6 +46,9 @@ def main(argv=None) -> int:
     )
     result = flow.run()
     print(f"\nReport: {result.markdown_path} ({result.words} words)")
+    usage = getattr(result, "usage", None)
+    if usage:
+        print("Run: " + usage["summary"].replace(" · ", " | "))  # cp1252 consoles cannot print the dot
     if result.pdf_path:
         print(f"PDF: {result.pdf_path}")
     for note in result.notes:
