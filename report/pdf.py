@@ -47,8 +47,12 @@ def build_html(md: str, figures: list[tuple[FigureSpec, Path]], diagrams: list[s
     start = len(figures)
     for j, block in enumerate(diagrams, start + 1):
         parts.append(block.replace("<figcaption>", f"<figcaption>Figure {j}. ", 1))
+    # Figures belong with the report body, so split off the generated reference list and put it after them.
+    split = re.search(r"<h2[^>]*>\s*References\s*</h2>", body)
+    body, references = (body[: split.start()], body[split.start():]) if split else (body, "")
     return _ENV.get_template("report.html.j2").render(
-        title=title, body=body, figures_html="\n".join(parts), notes=[n for n in notes if n]
+        title=title, body=body, figures_html="\n".join(parts), references=references,
+        notes=[n for n in notes if n],
     )
 
 

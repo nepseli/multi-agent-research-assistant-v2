@@ -15,7 +15,7 @@ Multi-agent research assistant (CrewAI Flow). See README.md for the architecture
 - Charts only from real CSV data in `runs/<id>/data/`; report text is HTML-escaped before PDF rendering.
 
 ## Known unverified areas (never run in the original sandbox)
-- `worker/Dockerfile`, `worker/engines.py` (Docling, Playwright, Crawl4AI) — build and fix first.
+- (Verified 2026-11-19: the worker image builds and /scrape, /parse-pdf, /render-pdf pass a live smoke test. Docling takes ~1.5 s per page on CPU.)
 - Live router/research/analyst crews against a real model.
 - Streamlit Stop button and run loop in a real browser.
 - GPT-5 model ID on OpenRouter for the `*_PDF` overrides.

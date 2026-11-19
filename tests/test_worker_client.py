@@ -46,3 +46,15 @@ def test_render_pdf_sends_assets_base64_and_returns_bytes():
     sent = route.calls.last.request.read()
     assert b"ZmlnMS5zdmc" not in sent  # asset names are keys, not encoded
     assert b"PHN2Zy8+" in sent  # base64 of <svg/>
+
+
+def test_parse_pdf_allows_long_documents(monkeypatch):
+    seen = {}
+
+    def fake_post(url, json, timeout):
+        seen["timeout"] = timeout
+        return httpx.Response(200, json={"ok": True, "markdown": "", "tables": []})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    WorkerClient(BASE).parse_pdf("https://a.com/p.pdf")
+    assert seen["timeout"] >= 300

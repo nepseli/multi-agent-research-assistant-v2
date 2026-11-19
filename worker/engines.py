@@ -4,6 +4,7 @@ import base64
 import importlib.util
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 MERMAID_JS = Path(os.getenv("MERMAID_JS", "/opt/mermaid/mermaid.min.js"))
@@ -17,22 +18,60 @@ def capabilities() -> dict:
     }
 
 
-async def scrape_url(url: str, timeout_s: int) -> dict:
-    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+# Below this, the pruning filter has probably thrown away the real content (short pages, table-only pages).
+_MIN_FIT_CHARS = 400
 
-    config = CrawlerRunConfig(page_timeout=timeout_s * 1000, check_robots_txt=True)
+
+def _main_content(markdown) -> str:
+    raw = getattr(markdown, "raw_markdown", None) or str(markdown or "")
+    fit = getattr(markdown, "fit_markdown", None) or ""
+    return fit if len(fit) >= _MIN_FIT_CHARS else raw
+
+
+async def scrape_url(url: str, timeout_s: int) -> dict:
+    from crawl4ai import (
+        AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, DefaultMarkdownGenerator, PruningContentFilter,
+    )
+
+    # The agent sees only the first few thousand characters of a page, so spend them on the article:
+    # drop page chrome by tag, prune low-value blocks, and leave out inline links (the page URL is
+    # still the cited source). Measured on Wikipedia: 25k -> 14k chars, starting at the article text.
+    generator = DefaultMarkdownGenerator(
+        content_filter=PruningContentFilter(threshold=0.48, threshold_type="fixed"),
+        options={"ignore_images": True, "ignore_links": True},
+    )
+    config = CrawlerRunConfig(
+        page_timeout=timeout_s * 1000,
+        check_robots_txt=True,
+        markdown_generator=generator,
+        excluded_tags=["nav", "header", "footer", "aside", "form", "noscript"],
+        remove_overlay_elements=True,
+    )
     async with AsyncWebCrawler(config=BrowserConfig(headless=True)) as crawler:
         result = await crawler.arun(url=url, config=config)
     if not result.success:
         return {"ok": False, "markdown": "", "title": "", "error": result.error_message or "crawl failed"}
     title = (result.metadata or {}).get("title") or ""
-    return {"ok": True, "markdown": str(result.markdown or ""), "title": title, "error": None}
+    return {"ok": True, "markdown": _main_content(result.markdown), "title": title, "error": None}
+
+
+_CONVERTER = None
+_CONVERTER_LOCK = threading.Lock()
+
+
+def _converter():
+    """One Docling converter for the worker's lifetime: building it loads the layout and table models (~10 s)."""
+    global _CONVERTER
+    if _CONVERTER is None:
+        from docling.document_converter import DocumentConverter
+
+        _CONVERTER = DocumentConverter()
+    return _CONVERTER
 
 
 def _parse_pdf_sync(url: str) -> dict:
-    from docling.document_converter import DocumentConverter
-
-    document = DocumentConverter().convert(url).document
+    with _CONVERTER_LOCK:  # one conversion at a time; the converter is not documented as thread-safe
+        document = _converter().convert(url).document
     tables: list[list[list[str]]] = []
     for table in document.tables:
         try:

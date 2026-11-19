@@ -46,3 +46,8 @@ def test_build_html_escapes_raw_html_from_report_text():
     html = build_html(md, [], [], "T", [])
     assert "<script>fetch" not in html and "<img src=http://internal" not in html
     assert "&lt;script&gt;" in html
+
+
+def test_figures_are_placed_before_references(tmp_path):
+    html = build_html(MD, [(_spec(1), tmp_path / "fig1.svg")], [], "Title", [])
+    assert html.index("Figure 1") < html.index(">References<")
