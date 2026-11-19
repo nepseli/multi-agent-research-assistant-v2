@@ -14,7 +14,7 @@ from core.config import (
 def _clean_env(monkeypatch):
     for name in ("STRONG_LLM", "LIGHT_LLM", "STRONG_LLM_PDF", "LIGHT_LLM_PDF"):
         monkeypatch.delenv(name, raising=False)
-    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER"):
+    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER", "FACT_CHECKER"):
         for suffix in ("_LLM", "_TEMP", "_LLM_PDF", "_TEMP_PDF"):
             monkeypatch.delenv(prefix + suffix, raising=False)
 
@@ -56,7 +56,7 @@ def test_roles_default_to_their_tier_model(monkeypatch):
     monkeypatch.setenv("LIGHT_LLM", "small")
     assert {r: get_llm_settings(r)[0] for r in ROLE_TIER} == {
         "router": "big", "research": "big", "analyst": "big", "writer": "big",
-        "editor": "small", "figure_planner": "small",
+        "editor": "small", "figure_planner": "small", "fact_checker": "small",
     }
 
 
@@ -169,3 +169,20 @@ def test_role_reasoning_beats_tier_setting_which_beats_role_default():
     assert llm_options("figure_planner", env=_env(LIGHT_REASONING="high"))["reasoning_effort"] == "high"
     env = _env(LIGHT_REASONING="high", FIGURE_PLANNER_REASONING="low")
     assert llm_options("figure_planner", env=env)["reasoning_effort"] == "low"
+
+
+def test_today_iso_is_an_iso_date():
+    import re
+
+    from core.config import today_iso
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", today_iso())
+
+
+def test_fact_checker_is_a_light_role_that_reasons_at_medium(monkeypatch):
+    from core.config import ROLE_TIER
+
+    assert ROLE_TIER["fact_checker"] == "light"
+    assert llm_options("fact_checker", env=_env())["reasoning_effort"] == "medium"
+    monkeypatch.setenv("LIGHT_LLM", "small")
+    assert get_llm_settings("fact_checker") == ("small", 0.0)

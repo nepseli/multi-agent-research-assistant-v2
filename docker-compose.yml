@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: worker/Dockerfile
+      args:
+        # 1 = full image with Docling PDF parsing (~6.2 GB). 0 = lean image (no PDF parsing).
+        # PowerShell: $env:WORKER_DOCLING = "0"; docker compose up -d --build
+        WITH_DOCLING: ${WORKER_DOCLING:-1}
     ports:
       - "127.0.0.1:8000:8000"   # bound to localhost only; the worker has no auth
     shm_size: "1gb"             # Chromium needs more than the 64 MB default

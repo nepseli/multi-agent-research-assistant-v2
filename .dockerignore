@@ -1,0 +1,5 @@
+# The worker image needs only worker/. Without this, every build uploads the whole project
+# (including .venv, about 1.3 GB) to Docker before the first step runs.
+*
+!worker/
+worker/__pycache__/

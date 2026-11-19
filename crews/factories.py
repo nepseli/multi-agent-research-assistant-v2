@@ -5,7 +5,7 @@ import textwrap
 
 from crewai import LLM, Agent, Crew, Process, Task
 
-from core.config import get_llm_settings, llm_options
+from core.config import get_llm_settings, llm_options, today_iso
 from core.models import ResearchPlan
 from core.run_context import RunContext
 from flows.research_flow import FlowDeps
@@ -25,6 +25,17 @@ class _HideApproxTokenCount(logging.Filter):
 _base_llm_log = logging.getLogger("crewai.llms.base_llm")
 if not any(type(f).__name__ == _HideApproxTokenCount.__name__ for f in _base_llm_log.filters):  # once, even on reload
     _base_llm_log.addFilter(_HideApproxTokenCount())
+
+# gpt-oss tends to cite in its browsing-tool format, 【S3】; the registry copes, but ask for the real one.
+CITE_RULE = "Cite with the exact ids from tool output in square brackets, e.g. [S3] or [S3][S7], never 【S3】 or (S3)."
+
+SOURCE_RANKING = (
+    "Prefer sources in this order: official and primary sources (government, regulators, standards bodies, "
+    "company filings and announcements, the papers themselves); then established news outlets, research "
+    "firms and industry bodies; then expert blogs. Use social media, forums and video only when nothing "
+    "better exists, and say so. Note each source's publication date when it is shown. For anything that "
+    "changes (markets, policy, funding, products) prefer the most recent sources and say how old a figure is."
+)
 
 _TIER_GUIDE = textwrap.dedent(
     """\
@@ -50,6 +61,8 @@ def router_prompt(topic: str) -> str:
         - "tier": integer 0, 1, 2 or 3
         - "rationale": one short sentence explaining the tier
         - "subqueries": 2 to 6 focused search queries (1 to 2 for tier 0)
+        Today is {today_iso()}. Put a year in a query only when the topic asks for one, and then use the
+        current or a recent year, not one from your training data.
         Do not include budgets; they are set by the system."""
     )
 
@@ -84,7 +97,7 @@ def route_topic(topic: str, pdf: bool = False) -> str:
 def _research_description(plan: ResearchPlan) -> str:
     b = plan.budget
     steps = [
-        f"Research the topic: {plan.topic}",
+        f"Today is {today_iso()}. Research the topic: {plan.topic}",
         f"Domain: {plan.domain}. Depth tier: {plan.tier}. Starting queries: {'; '.join(plan.subqueries)}.",
         f"Budget: at most {b.max_searches} searches, {b.max_pages} page reads, {b.max_pdfs} PDF reads. "
         "Tools report BUDGET EXHAUSTED when a limit is reached; then stop using that tool.",
@@ -93,6 +106,13 @@ def _research_description(plan: ResearchPlan) -> str:
         steps.append("This is a simple question: one or two searches are enough. Keep the answer short.")
     else:
         steps.append("Search first, then read the most relevant and most authoritative pages.")
+        if b.max_pages > 0:
+            # Live runs read 2 of 8 allowed pages and built whole reports on 150-character snippets.
+            steps.append(
+                f"Read at least {min(5, b.max_pages)} pages in full. A search snippet only shows that a page "
+                "exists: report a number, date, name or other detail only if you read it on a page or in an "
+                "abstract, never from the snippet alone."
+            )
     if plan.use_academic:
         steps.append(
             "Also use academic_search for journals, proceedings and preprints, and read_open_access_pdf "
@@ -103,9 +123,11 @@ def _research_description(plan: ResearchPlan) -> str:
             "After the first pass, list the gaps in coverage and run up to two more rounds of targeted "
             "searches or citation follow-ups to fill them (gap check)."
         )
+    steps.append(SOURCE_RANKING)
     steps.append(
-        "Cite every fact with the [S#] ids shown in tool output. Never invent ids, URLs or papers. "
-        "Output: key findings with [S#] after each claim, important statistics, differing views, and open gaps."
+        f"Cite every fact. {CITE_RULE} Never invent ids, URLs or papers. "
+        "Output: key findings with a citation after each claim, important statistics with the year they "
+        "refer to, differing views, and open gaps."
     )
     return "\n".join(steps)
 
@@ -150,8 +172,10 @@ def build_analyst_crew(pdf: bool = False) -> Crew:
     )
     task = Task(
         description=(
-            "Analyse these research findings. Identify patterns, trends, implications and the most important "
-            "conclusions. Keep the [S#] citations. Do not add sources that are not in the findings.\n\n{findings}"
+            f"Today is {today_iso()}. Analyse these research findings. Identify patterns, trends, implications "
+            "and the most important conclusions. Weigh the evidence: say where a conclusion rests on a single "
+            "source, on old figures, or on weak sources such as social media or vendor marketing. Keep the "
+            f"citations. {CITE_RULE} Do not add sources that are not in the findings.\n\n" + "{findings}"
         ),
         expected_output="An analysis with insights, trends, implications and actionable conclusions, with [S#] citations",
         agent=agent,
@@ -169,4 +193,6 @@ def default_deps(pdf: bool = False, worker_url: str | None = None) -> FlowDeps:
         worker=worker,
         figure_llm=make_llm_fn("figure_planner", pdf),
         edit_llm=make_llm_fn("editor", pdf),
+        check_llm=None if os.getenv("CLAIM_CHECK", "on").strip().lower() in ("off", "0", "false", "no")
+        else make_llm_fn("fact_checker", pdf),
     )

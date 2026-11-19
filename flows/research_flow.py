@@ -42,6 +42,7 @@ class FlowDeps:
     worker: object
     figure_llm: LLMFn | None = None
     edit_llm: LLMFn | None = None  # outline, length adjustment and citation repair; defaults to llm
+    check_llm: LLMFn | None = None  # claim check against source text; None skips it
     year_counts: Callable[[str, str | None], dict[int, int]] | None = None
 
 
@@ -159,6 +160,16 @@ class ResearchFlow(Flow[_State]):
                     "Worker unavailable: pages and PDFs could not be read; this report relies on "
                     "search snippets and abstracts."
                 )
+            elif plan.use_pdf_parsing and health.get("parse_pdf") is False:
+                # The lean worker image is built without Docling: pages work, papers fall back to abstracts.
+                budget = plan.budget.model_copy(update={"max_pdfs": 0})
+                plan = plan.model_copy(update={"budget": budget, "use_pdf_parsing": False})
+                self.plan = plan
+                (ctx.run_dir / "plan.json").write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+                self._note(
+                    "The worker has no PDF parser (lean image), so papers were read from their abstracts. "
+                    "Build the full worker to read open-access PDFs."
+                )
         try:
             self.findings = self.deps.research(plan, ctx)
         except Exception as exc:
@@ -253,7 +264,10 @@ class ResearchFlow(Flow[_State]):
             pdf=self.pdf,
             notes=self.notes,
             extra_cited=[sid for spec, _ in self.figures for sid in spec.source_ids],
+            check_llm=self.deps.check_llm,
         )
+        if written.claims:  # every checked statement, its verdict and any fix, for review
+            (self.ctx.run_dir / "claims.json").write_text(json.dumps(written.claims, indent=2), encoding="utf-8")
         md_path = self.ctx.run_dir / f"{self.ctx.report_stem}.md"
         md_path.write_text(written.markdown, encoding="utf-8")
         self.ctx.registry.save()

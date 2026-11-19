@@ -1,6 +1,7 @@
 import json
 import math
 import re
+from datetime import date
 
 from core.config import TIER_CAPS
 from core.models import Budget, ResearchPlan
@@ -34,7 +35,25 @@ def _extract_json(raw: str) -> dict:
     return json.loads(text)
 
 
-def parse_plan(raw: str | dict, topic: str) -> ResearchPlan:
+# A year, or a range like 2023-2025, as a whole word.
+_YEARS = re.compile(r"\s*\b((?:19|20)\d{2})(?:\s*[-–/]\s*((?:19|20)\d{2}))?\b")
+STALE_YEARS = 6  # years before this one that a model adds from habit; older ones are deliberate history
+
+
+def _drop_stale_years(query: str, topic: str, year: int) -> str:
+    """Remove recent-past years the topic did not ask for: models add their training-data years
+    ("... 2024"), which narrows search to old results."""
+
+    def repl(m: re.Match) -> str:
+        latest = int(m.group(2) or m.group(1))
+        if latest >= year or latest < year - STALE_YEARS or m.group(1) in topic:
+            return m.group(0)
+        return ""
+
+    return " ".join(_YEARS.sub(repl, query).split()) or query
+
+
+def parse_plan(raw: str | dict, topic: str, year: int | None = None) -> ResearchPlan:
     """Parse router output into a plan; any failure falls back to a Tier 1 plan."""
     try:
         data = dict(raw) if isinstance(raw, dict) else _extract_json(raw)
@@ -45,6 +64,8 @@ def parse_plan(raw: str | dict, topic: str) -> ResearchPlan:
         data.setdefault("subqueries", [topic])
         if not data["subqueries"]:
             data["subqueries"] = [topic]
+        this_year = year or date.today().year
+        data["subqueries"] = [_drop_stale_years(str(q), topic, this_year) for q in data["subqueries"]]
         data["budget"] = data.get("budget") or TIER_CAPS[tier].model_dump()
         data.pop("warnings", None)
         return ResearchPlan(**data)

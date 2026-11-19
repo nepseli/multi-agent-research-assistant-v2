@@ -1,0 +1,2 @@
+# Full image only (WITH_DOCLING=1): open-access PDF parsing.
+docling>=2.0

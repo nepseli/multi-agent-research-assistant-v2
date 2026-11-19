@@ -1,11 +1,12 @@
 import os
+from datetime import date
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
 from core.models import Budget
 
-Role = Literal["router", "research", "analyst", "writer", "editor", "figure_planner"]
+Role = Literal["router", "research", "analyst", "writer", "editor", "figure_planner", "fact_checker"]
 Tier = Literal["strong", "light"]
 
 
@@ -20,6 +21,7 @@ _PREFIX = {
     "writer": "WRITER_AGENT",
     "editor": "EDITOR",
     "figure_planner": "FIGURE_PLANNER",
+    "fact_checker": "FACT_CHECKER",
 }
 
 # Judgement-heavy steps get the strong model; short, constrained ones (JSON outlines, length
@@ -31,10 +33,11 @@ ROLE_TIER: dict[str, Tier] = {
     "writer": "strong",
     "editor": "light",
     "figure_planner": "light",
+    "fact_checker": "light",  # compares cited statements with source text
 }
 TIER_VAR: dict[str, str] = {"strong": "STRONG_LLM", "light": "LIGHT_LLM"}
 DEFAULT_TEMP: dict[str, float] = {
-    "router": 0.0, "research": 0.3, "analyst": 0.3, "writer": 0.3, "editor": 0.2, "figure_planner": 0.0,
+    "router": 0.0, "research": 0.3, "analyst": 0.3, "writer": 0.3, "editor": 0.2, "figure_planner": 0.0, "fact_checker": 0.0,
 }
 
 
@@ -81,7 +84,8 @@ def get_llm_settings(role: Role, pdf: bool = False) -> tuple[str, float]:
 # LIGHT_REASONING; "default" sends nothing.
 TIER_REASONING: dict[str, str | None] = {"strong": None, "light": "low"}
 # Per-role exceptions to the tier default: Mermaid syntax comes out broken more often at low effort.
-ROLE_REASONING: dict[str, str] = {"figure_planner": "medium"}
+# The fact checker judges claims against evidence, which low effort does carelessly.
+ROLE_REASONING: dict[str, str] = {"figure_planner": "medium", "fact_checker": "medium"}
 # OpenRouter serves gpt-oss from many hosts. We ask for the fastest host, capped at Groq's price in
 # USD per million tokens (prompt, completion), so the fastest and dearest hosts are skipped.
 TIER_MAX_PRICE: dict[str, tuple[float, float]] = {"strong": (0.15, 0.60), "light": (0.075, 0.30)}
@@ -153,3 +157,8 @@ SIZE_PRESETS: dict[str, SizePreset] = {
     "medium": SizePreset(2000, 3000, 2, 3, 4),
     "big": SizePreset(5000, 7000, 4, 6, 8),
 }
+
+
+def today_iso() -> str:
+    """Today's date for prompts: models otherwise assume their training cutoff and search for stale years."""
+    return date.today().isoformat()

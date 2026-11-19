@@ -10,11 +10,11 @@ from tests.fakes import FakeWorker
 
 @pytest.fixture(autouse=True)
 def env(monkeypatch):
-    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER"):
+    for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER", "FACT_CHECKER"):
         for suffix in ("_LLM", "_TEMP", "_LLM_PDF", "_TEMP_PDF"):
             monkeypatch.delenv(prefix + suffix, raising=False)
     for name in ("STRONG_LLM_PDF", "LIGHT_LLM_PDF", "STRONG_REASONING", "LIGHT_REASONING", "FIGURE_PLANNER_REASONING", "EDITOR_REASONING",
-                 "OPENROUTER_SORT", "STRONG_MAX_PRICE", "LIGHT_MAX_PRICE"):
+                 "OPENROUTER_SORT", "STRONG_MAX_PRICE", "LIGHT_MAX_PRICE", "CLAIM_CHECK"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("STRONG_LLM", "openrouter/openai/gpt-oss-120b")
     monkeypatch.setenv("LIGHT_LLM", "openrouter/openai/gpt-oss-20b")
@@ -95,3 +95,38 @@ def test_approximate_token_count_warning_is_hidden_but_other_warnings_are_not(ca
         log.warning("something else went wrong")
     assert "approximate input token count" not in caplog.text
     assert "something else went wrong" in caplog.text
+
+
+def test_research_prompt_has_date_source_ranking_and_citation_format(monkeypatch):
+    monkeypatch.setattr(factories, "today_iso", lambda: "2026-11-19")
+    text = factories._research_description(_plan(2))
+    assert "2026-11-19" in text
+    assert "official" in text.lower() and "social media" in text.lower()
+    assert "publication date" in text.lower()
+    assert "[S3]" in text and "【" in text
+
+
+def test_analyst_prompt_has_date_and_keeps_only_the_findings_placeholder(monkeypatch):
+    import re
+
+    monkeypatch.setattr(factories, "today_iso", lambda: "2026-11-19")
+    description = factories.build_analyst_crew().tasks[0].description
+    assert "2026-11-19" in description and "[S3]" in description
+    assert re.findall(r"\{(\w+)\}", description) == ["findings"]  # CrewAI fills {placeholders} from inputs
+
+
+def test_router_prompt_knows_the_date_so_queries_are_not_stale(monkeypatch):
+    monkeypatch.setattr(factories, "today_iso", lambda: "2026-11-19")
+    prompt = factories.router_prompt("agentic AI in Singapore")
+    assert "2026-11-19" in prompt and "year" in prompt.lower()
+
+
+def test_default_deps_include_a_fact_checker_unless_switched_off(monkeypatch):
+    assert factories.default_deps().check_llm is not None
+    monkeypatch.setenv("CLAIM_CHECK", "off")
+    assert factories.default_deps().check_llm is None
+
+
+def test_research_prompt_asks_to_read_pages_not_rely_on_snippets():
+    text = factories._research_description(_plan(1))
+    assert "Read at least" in text and "snippet" in text.lower()

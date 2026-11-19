@@ -201,3 +201,184 @@ def test_fullwidth_citations_count_and_reach_references(tmp_path):
     assert "【" not in out.markdown
     assert "[S1] Alpha Source" in out.markdown
     assert "No sources were cited" not in out.markdown
+
+
+# -- outline discipline --------------------------------------------------------
+
+class PromptLLM(ScriptedLLM):
+    """ScriptedLLM that also keeps every prompt, and can write some sections longer."""
+
+    def __init__(self, long_headings=(), **kw):
+        super().__init__(**kw)
+        self.prompts = []
+        self.long_headings = set(long_headings)
+
+    def __call__(self, prompt):
+        self.prompts.append(prompt)
+        out = super().__call__(prompt)
+        heading = re.search(r"^HEADING: (.*)$", prompt, re.M)
+        if prompt.startswith("SECTION_REQUEST") and heading and heading.group(1) in self.long_headings:
+            out = out + " " + out + " " + out
+        return out
+
+    def section_prompts(self):
+        return [p for p in self.prompts if p.startswith("SECTION_REQUEST")]
+
+
+def _headings(markdown):
+    return re.findall(r"^## (.+)$", markdown.split("## References")[0], re.M)
+
+
+def test_subsections_in_the_outline_are_folded_into_their_parent(tmp_path):
+    outline = []
+    for i in range(1, 9):
+        outline.append({"heading": f"{i}. Topic {i}", "words": 400})
+        outline += [{"heading": f"{i}.{j} Detail {i}.{j}", "words": 150} for j in range(1, 5)]
+    llm = PromptLLM(outline=outline)
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    heads = _headings(out.markdown)
+    assert len(heads) <= 7
+    assert not any(re.match(r"\d", h) for h in heads)  # no "2.1 ..." and no "3. ..." numbering
+    assert "Detail 1.2" in llm.section_prompts()[0]  # a folded subsection still shapes its parent
+    assert out.status == "ok"
+
+
+def test_outline_word_targets_are_rescaled_to_the_size(tmp_path):
+    llm = PromptLLM(outline=[{"heading": f"Part {i}", "words": 1200} for i in range(6)])  # totals 7200
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    targets = [int(re.search(r"TARGET_WORDS: (\d+)", p).group(1)) for p in llm.section_prompts()]
+    assert 2300 <= sum(targets) <= 2700
+
+
+def test_outline_capped_but_last_section_kept(tmp_path):
+    outline = [{"heading": f"Part {i}", "words": 250} for i in range(10)] + [{"heading": "Conclusion", "words": 250}]
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                       llm=PromptLLM(outline=outline))
+    heads = _headings(out.markdown)
+    assert len(heads) == 7 and heads[-1] == "Conclusion"
+
+
+def test_model_planned_source_sections_are_dropped(tmp_path):
+    outline = _outline(4) + [{"heading": "Appendix: Source Citations", "words": 200}, {"heading": "References", "words": 100}]
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                       llm=PromptLLM(outline=outline))
+    assert "Source Citations" not in out.markdown
+    assert out.markdown.count("## References") == 1
+
+
+def test_each_section_sees_the_outline_and_what_others_cover(tmp_path):
+    outline = [{"heading": "Funding", "words": 600, "covers": "venture rounds and grants"},
+               {"heading": "Policy", "words": 600, "covers": "the governance framework"},
+               {"heading": "Outlook", "words": 600, "covers": "what comes next"}]
+    llm = PromptLLM(outline=outline)
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    policy = next(p for p in llm.section_prompts() if "HEADING: Policy" in p)
+    assert "venture rounds and grants" in policy and "do not repeat" in policy.lower()
+
+
+def test_outline_prompt_asks_for_top_level_sections_with_scope(tmp_path):
+    llm = PromptLLM(outline=_outline(5))
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    outline_prompt = llm.prompts[0]
+    assert "5 to 7" in outline_prompt and "covers" in outline_prompt and "subsection" in outline_prompt.lower()
+
+
+def test_length_pass_only_rewrites_the_sections_that_are_off(tmp_path):
+    llm = PromptLLM(outline=_outline(5), long_headings={"Section 0"})
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    adjusted = [p for p in llm.prompts if p.startswith("ADJUST_REQUEST")]
+    assert len(adjusted) == 1 and "HEADING: Section 0" in adjusted[0]
+
+
+# -- cleaning model additions --------------------------------------------------
+
+LONG_HEADING = "3. Policy & Regulatory Momentum – The Model AI Governance Framework"
+
+
+def _cleaning_llm(body):
+    class BodyLLM(ScriptedLLM):
+        def __call__(self, prompt):
+            if prompt.startswith(("SECTION_REQUEST", "ADJUST_REQUEST")):  # the length pass must not hide the body
+                self.calls.append(prompt.split("\n", 1)[0])
+                return body
+            return super().__call__(prompt)
+
+    return BodyLLM(outline=[{"heading": LONG_HEADING, "words": 50}])
+
+
+def test_section_title_repeated_in_bold_is_removed(tmp_path):
+    body = ("**3. Policy & Regulatory Momentum – The Model AI Governance Framework (MGF)**\n\n"
+            "Text [S1].\n\n**Key takeaways**\n\nMore.")
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                       llm=_cleaning_llm(body))
+    assert out.markdown.count("Policy & Regulatory Momentum") == 1
+    assert "**Key takeaways**" in out.markdown  # inner bold labels are fine
+
+
+def test_section_title_repeated_as_a_heading_or_with_word_banner_is_removed(tmp_path):
+    for first in ("### Policy & Regulatory Momentum",
+                  "**Policy and regulatory momentum – 300‑Word Section**",
+                  "## " + LONG_HEADING):
+        out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                           llm=_cleaning_llm(first + "\n\nText [S1]."))
+        assert out.markdown.lower().count("regulatory momentum") == 1, first
+        assert "Word Section" not in out.markdown
+
+
+def test_model_written_source_list_inside_a_section_is_removed(tmp_path):
+    body = "Text [S1].\n\n### Sources\n\n- [S1] Alpha, https://a.com\n- [S9] Invented"
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                       llm=_cleaning_llm(body))
+    assert "Invented" not in out.markdown and "### Sources" not in out.markdown
+
+
+# -- prompts -------------------------------------------------------------------
+
+def test_writer_prompts_carry_date_style_and_citation_format(tmp_path):
+    llm = PromptLLM(outline=_outline(5))
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm,
+                 today="2026-11-19")
+    section = llm.section_prompts()[0]
+    assert "2026-11-19" in section
+    assert "plain" in section.lower() and "acronym" in section.lower()
+    assert "[S3]" in section and "【" in section  # shows the right format and names the wrong one
+    small = PromptLLM()
+    write_report(topic="T", findings="f", analysis="a", size="small", registry=_registry(tmp_path), llm=small,
+                 today="2026-11-19")
+    assert "2026-11-19" in small.prompts[0] and "acronym" in small.prompts[0].lower()
+
+
+def test_title_repeat_matches_across_hyphen_styles():
+    from report.writer import _clean_body
+
+    out = _clean_body("**4. Key Agentic\u2011AI Start\u2011ups in Singapore**\n\nText.", "T", "4. Key Agentic AI Start-ups in Singapore")
+    assert out == "Text."
+
+
+def test_claim_check_fixes_text_notes_the_result_and_returns_claims(tmp_path):
+    import json as _json
+
+    def checker(prompt):
+        ids = re.findall(r"^STATEMENT (\d+):", prompt, re.M)
+        return _json.dumps([{"id": int(i), "verdict": "unsupported", "fix": "Claim reworded [S99]."} for i in ids])
+
+    r = _registry(tmp_path)
+    r.add("https://a.com", "Alpha Source", "web", "read_page", content="Alpha says word word word.")
+    llm = ScriptedLLM(outline=_outline(3), body_suffix="Claim [S1].")
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=r, llm=llm, check_llm=checker)
+    assert out.claims and out.claims[0]["verdict"] == "unsupported"
+    assert any(n.startswith("Claim check:") for n in out.notes)
+    assert "Claim reworded" in out.markdown
+    assert "[S99]" not in out.markdown  # a fix cannot bring in an unknown source
+
+
+def test_no_claim_check_without_a_checker(tmp_path):
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                       llm=ScriptedLLM(outline=_outline(3), body_suffix="Claim [S1]."))
+    assert out.claims == [] and not any("Claim check" in n for n in out.notes)
+
+
+def test_style_forbids_adding_details_from_memory(tmp_path):
+    from report.writer import STYLE
+
+    assert "memory" in STYLE.lower() and "only" in STYLE.lower()

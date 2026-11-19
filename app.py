@@ -140,8 +140,11 @@ if result:
         if sources_file.exists():
             import json
 
+            from core.registry import _DEPTH_LABEL
+
             for s in json.loads(sources_file.read_text(encoding="utf-8")):
-                st.markdown(f"**[{s['id']}]** [{s['title']}]({s['url']}) — {s['kind']}")
+                depth = _DEPTH_LABEL.get(s.get("depth") or "")
+                st.markdown(f"**[{s['id']}]** [{s['title']}]({s['url']}) — {s['kind']}" + (f", {depth}" if depth else ""))
     with notes_tab:
         if result.notes:
             for n in result.notes:

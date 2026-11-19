@@ -11,6 +11,7 @@ ROLE_LABELS = {
     "writer": "Writer",
     "editor": "Editor (outline, length, citations)",
     "figure_planner": "Figure planner",
+    "fact_checker": "Fact checker",
 }
 
 

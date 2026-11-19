@@ -29,8 +29,9 @@ class ScriptedLLM:
 class FakeWorker:
     """Stands in for WorkerClient in flow tests."""
 
-    def __init__(self, healthy=True):
+    def __init__(self, healthy=True, parse_pdf=True):
         self.healthy = healthy
+        self.can_parse_pdf = parse_pdf  # False imitates the lean image built without Docling
         self.mermaid_checks = []
 
     def check_mermaid(self, codes):
@@ -41,7 +42,9 @@ class FakeWorker:
         return [{"error": "Parse error" if "SYNTAX_ERROR" in c else None, "width": 500, "height": 200} for c in codes]
 
     def health(self):
-        return {"ok": True, "scrape": True, "parse_pdf": True, "render_pdf": True} if self.healthy else {"ok": False, "error": "down"}
+        if not self.healthy:
+            return {"ok": False, "error": "down"}
+        return {"ok": True, "scrape": True, "parse_pdf": self.can_parse_pdf, "render_pdf": True, "check_mermaid": True}
 
     def scrape(self, url, timeout_s=60):
         return {"ok": self.healthy, "markdown": "body", "title": "t", "error": None if self.healthy else "down"}
