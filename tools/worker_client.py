@@ -40,6 +40,22 @@ class WorkerClient:
         # Docling on CPU takes ~25 s for a 15-page paper, so long papers need well over the default 120 s.
         return self._post_json("/parse-pdf", {"url": url}, timeout=max(self.timeout, 300))
 
+    def check_mermaid(self, codes: list[str]) -> list[dict] | None:
+        """Draw each diagram in the worker. One {"error", "width", "height"} per code; error is None
+        when it drew. Returns None when the worker cannot check (down, or an image without the endpoint)."""
+        data = self._post_json("/check-mermaid", {"codes": codes}, timeout=60)
+        results = data.get("results") if data.get("ok") else None
+        if not isinstance(results, list) or len(results) != len(codes):
+            return None
+        return [
+            {
+                "error": None if r.get("ok") else (r.get("error") or "diagram failed to draw"),
+                "width": r.get("width"),
+                "height": r.get("height"),
+            }
+            for r in results
+        ]
+
     def render_pdf(self, html: str, assets: dict[str, bytes] | None = None) -> bytes:
         encoded = {name: base64.b64encode(data).decode() for name, data in (assets or {}).items()}
         try:

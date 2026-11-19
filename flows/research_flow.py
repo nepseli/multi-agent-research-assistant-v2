@@ -225,7 +225,18 @@ class ResearchFlow(Flow[_State]):
             except Exception as exc:
                 self._note(f"Figure skipped: {spec.title}: {exc}")
         room = max(preset.figures_max - len(self.figures), 0)
-        self.diagrams = plan_diagrams(deps.figure_llm, self.findings, self.analysis, min(room, 2))
+        diagrams = plan_diagrams(
+            deps.figure_llm, self.findings, self.analysis, min(room, 2),
+            check=getattr(deps.worker, "check_mermaid", None),
+        )
+        if diagrams:  # keep the source, so a bad figure can be inspected or re-rendered later
+            (ctx.run_dir / "diagrams.json").write_text(
+                json.dumps([d.to_dict() for d in diagrams], indent=2), encoding="utf-8"
+            )
+        for d in diagrams:
+            if d.status == "dropped":
+                self._note(f"Diagram left out: {d.caption or 'untitled'}: {d.problem}")
+        self.diagrams = [d.block() for d in diagrams if d.status != "dropped"]
 
     @listen(step_figures)
     def step_write(self):

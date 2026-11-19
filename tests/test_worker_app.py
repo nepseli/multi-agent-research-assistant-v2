@@ -75,3 +75,27 @@ def test_engine_failure_is_reported_not_raised(monkeypatch):
     r = client.post("/scrape", json={"url": "https://example.com"})
     assert r.status_code == 200
     assert r.json()["ok"] is False and "browser crashed" in r.json()["error"]
+
+
+def test_check_mermaid_returns_one_result_per_code(monkeypatch):
+    async def check(codes):
+        return [{"ok": True, "error": None}, {"ok": False, "error": "Parse error on line 2"}]
+
+    monkeypatch.setattr(worker_app.engines, "check_mermaid", check)
+    r = client.post("/check-mermaid", json={"codes": ["flowchart LR\nA-->B", "flowchart LR\nA-->"]})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "results": [{"ok": True, "error": None}, {"ok": False, "error": "Parse error on line 2"}]}
+
+
+def test_check_mermaid_rejects_too_many_or_too_long_codes():
+    assert client.post("/check-mermaid", json={"codes": ["graph LR"] * 21}).status_code == 400
+    assert client.post("/check-mermaid", json={"codes": ["x" * 20_001]}).status_code == 400
+
+
+def test_check_mermaid_engine_crash_is_reported(monkeypatch):
+    async def boom(codes):
+        raise RuntimeError("no browser")
+
+    monkeypatch.setattr(worker_app.engines, "check_mermaid", boom)
+    r = client.post("/check-mermaid", json={"codes": ["graph LR"]})
+    assert r.status_code == 500 and "no browser" in r.json()["error"]

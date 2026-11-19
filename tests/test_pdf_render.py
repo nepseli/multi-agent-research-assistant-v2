@@ -51,3 +51,18 @@ def test_build_html_escapes_raw_html_from_report_text():
 def test_figures_are_placed_before_references(tmp_path):
     html = build_html(MD, [(_spec(1), tmp_path / "fig1.svg")], [], "Title", [])
     assert html.index("Figure 1") < html.index(">References<")
+
+
+def test_diagrams_are_capped_to_one_page():
+    html = build_html(MD, [], ['<figure class="diagram"><pre class="mermaid">flowchart LR\nA-->B</pre></figure>'], "Title", [])
+    assert "figure.diagram svg" in html and "max-height" in html
+
+
+def test_figures_heading_has_an_id_for_the_renderer():
+    html = build_html(MD, [], ['<figure class="diagram"><pre class="mermaid">flowchart LR\nA-->B</pre></figure>'], "Title", [])
+    assert 'id="figures-heading"' in html
+
+
+def test_figures_heading_stays_with_the_first_figure():
+    html = build_html(MD, [], ['<figure class="diagram"><pre class="mermaid">flowchart LR\nA-->B</pre></figure>'], "Title", [])
+    assert "#figures-heading" in html and "break-after: avoid" in html

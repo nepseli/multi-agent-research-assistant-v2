@@ -58,3 +58,20 @@ def test_parse_pdf_allows_long_documents(monkeypatch):
     monkeypatch.setattr(httpx, "post", fake_post)
     WorkerClient(BASE).parse_pdf("https://a.com/p.pdf")
     assert seen["timeout"] >= 300
+
+
+@respx.mock
+def test_check_mermaid_returns_error_or_none_per_code():
+    respx.post(f"{BASE}/check-mermaid").mock(return_value=httpx.Response(200, json={
+        "ok": True, "results": [{"ok": True, "error": None, "width": 600, "height": 300},
+                                {"ok": False, "error": "Parse error", "width": None, "height": None}]}))
+    assert WorkerClient(BASE).check_mermaid(["a", "b"]) == [
+        {"error": None, "width": 600, "height": 300}, {"error": "Parse error", "width": None, "height": None}]
+
+
+@respx.mock
+def test_check_mermaid_is_none_when_worker_cannot_check():
+    respx.post(f"{BASE}/check-mermaid").mock(side_effect=httpx.ConnectError("refused"))
+    assert WorkerClient(BASE).check_mermaid(["a"]) is None
+    respx.post(f"{BASE}/check-mermaid").mock(return_value=httpx.Response(404, json={"detail": "Not Found"}))
+    assert WorkerClient(BASE).check_mermaid(["a"]) is None
