@@ -8,7 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app_helpers import missing_settings, role_model_table, size_label, stages_for  # noqa: E402
+from app_helpers import (  # noqa: E402
+    ProgressTracker, list_runs, load_run, missing_settings, role_model_table, size_label, stages_for,
+)
 from core.config import SIZE_PRESETS  # noqa: E402
 from flows.research_flow import ResearchCancelled, ResearchFlow  # noqa: E402
 from tools.worker_client import WorkerClient  # noqa: E402
@@ -42,6 +44,18 @@ with st.sidebar:
         st.success("Docker worker is running")
     else:
         st.warning("Docker worker not reachable. Page reading and PDF output will be limited. Start it with `docker compose up -d`.")
+    st.subheader("Past runs")
+    past = list_runs("runs")
+    if past:
+        picked = st.selectbox("Open a finished report", [r["label"] for r in past], index=None,
+                              placeholder=f"{len(past)} saved reports", label_visibility="collapsed")
+        if st.button("Open report", disabled=picked is None or "job" in st.session_state):
+            run_dir = next(r["dir"] for r in past if r["label"] == picked)
+            st.session_state["result"] = load_run(run_dir)
+            st.session_state.pop("notice", None)
+            st.rerun()
+    else:
+        st.caption("Finished reports will appear here.")
 
 problems = missing_settings(os.environ)
 if problems:
@@ -51,8 +65,11 @@ if problems:
 topic = st.text_input("Research topic", placeholder="e.g. Defect mechanisms in GaN power devices", disabled="job" in st.session_state)
 job = st.session_state.get("job")
 
+# Drawn in both states, disabled while a run is going. While running, the script re-runs every
+# second and never finishes a pass, so a button drawn only when idle lingers on screen as a stale copy.
+clicked = st.button("Run research", type="primary", disabled=job is not None or not topic.strip())
 if job is None:
-    if st.button("Run research", type="primary", disabled=not topic.strip()):
+    if clicked:
         events: Queue = Queue()
         cancel = threading.Event()
         box: dict = {}
@@ -63,6 +80,7 @@ if job is None:
                 flow = ResearchFlow(
                     topic, pdf=pdf, size=size, forced_tier=forced, cancel=cancel,
                     on_stage=lambda s, state: events.put((s, state)),
+                    on_event=lambda record: events.put(record),
                 )
                 box["result"] = flow.run()
             except ResearchCancelled as exc:
@@ -75,7 +93,8 @@ if job is None:
         thread.start()
         st.session_state["job"] = {
             "events": events, "cancel": cancel, "box": box, "stages": stages_for(pdf),
-            "done": 0, "current": "route", "stopping": False,
+            "done": 0, "current": "route", "stopping": False, "progress": ProgressTracker(),
+            "started": time.monotonic(),
         }
         st.session_state.pop("result", None)
         st.session_state.pop("notice", None)
@@ -88,6 +107,9 @@ else:
             if item is None:
                 finished = True
                 break
+            if isinstance(item, dict):  # a log record: update the detail line
+                job["progress"].update(item)
+                continue
             stage, state = item
             if state == "start":
                 job["current"] = stage
@@ -111,7 +133,10 @@ else:
     if job["stopping"]:
         st.warning("Stopping... the current model call has to finish first, which can take a minute.")
     else:
-        st.info(STAGE_LABELS.get(job["current"], job["current"]) + "...")
+        elapsed = int(time.monotonic() - job["started"])
+        st.info(f"{STAGE_LABELS.get(job['current'], job['current'])}...  ({elapsed // 60}:{elapsed % 60:02d})")
+        if job["progress"].line and job["current"] == "research":
+            st.caption(job["progress"].line)
         if st.button("Stop", type="secondary"):
             job["cancel"].set()
             job["stopping"] = True
@@ -127,14 +152,23 @@ result = st.session_state.get("result")
 if result:
     with st.expander("Research plan", expanded=False):
         st.json(result.plan.model_dump())
-    report_tab, sources_tab, notes_tab = st.tabs(["Report", "Sources", "Coverage notes"])
+    tab_names = ["Report"] + (["PDF"] if result.pdf_path else []) + ["Sources", "Coverage notes"]
+    tabs = dict(zip(tab_names, st.tabs(tab_names)))
+    report_tab, sources_tab, notes_tab = tabs["Report"], tabs["Sources"], tabs["Coverage notes"]
     md = result.markdown_path.read_text(encoding="utf-8")
     with report_tab:
-        st.caption(f"{result.words:,} words · run folder: {result.run_dir}")
+        usage = (result.usage or {}).get("summary")
+        st.caption(f"{result.words:,} words" + (f" · {usage}" if usage else "") + f" · run folder: {result.run_dir}")
         st.markdown(md)
         st.download_button("Download Markdown", md, file_name=result.markdown_path.name, mime="text/markdown")
         if result.pdf_path:
             st.download_button("Download PDF", result.pdf_path.read_bytes(), file_name=result.pdf_path.name, mime="application/pdf")
+    if "PDF" in tabs:
+        with tabs["PDF"]:
+            try:
+                st.pdf(result.pdf_path.read_bytes(), height=900)
+            except Exception:  # the viewer needs streamlit[pdf]; the download button still works
+                st.info("The inline viewer is unavailable here; use Download PDF on the Report tab.")
     with sources_tab:
         sources_file = result.run_dir / "sources.json"
         if sources_file.exists():

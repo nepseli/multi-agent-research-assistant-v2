@@ -243,6 +243,26 @@ def _flowchart_problem(code: str) -> str | None:
     return None
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def _period_date(label: str) -> tuple[int, int | None] | None:
+    """(year, month or None) from a period label such as "2025", "Jun 2026" or "20 May 2026"."""
+    year = re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", label)
+    if not year:
+        return None
+    month = next((n for word, n in _MONTHS.items() if re.search(rf"\b{word}", label.lower())), None)
+    return int(year.group(0)), month
+
+
+def _before(a: tuple[int, int | None], b: tuple[int, int | None]) -> bool:
+    """a comes before b. Months only count when both periods name one ("2026" may cover any month)."""
+    if a[0] != b[0]:
+        return a[0] < b[0]
+    return a[1] is not None and b[1] is not None and a[1] < b[1]
+
+
 def _timeline_problem(code: str) -> str | None:
     periods: list[list[str]] = []
     labels: list[str] = []
@@ -260,8 +280,8 @@ def _timeline_problem(code: str) -> str | None:
     for label in labels:
         if labels.count(label) > 1:
             return f'period "{label}" appears more than once; put all its events on one line'
-    years = [int(m.group(0)) for m in (re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", label) for label in labels) if m]
-    if any(later < earlier for earlier, later in zip(years, years[1:])):
+    dates = [d for d in (_period_date(label) for label in labels) if d]
+    if any(_before(later, earlier) for earlier, later in zip(dates, dates[1:])):
         return f"periods are out of order ({', '.join(labels)}); list them from earliest to latest"
     if len(periods) > MAX_PERIODS:
         return f"it has {len(periods)} periods; use at most {MAX_PERIODS} (group years or drop minor ones)"

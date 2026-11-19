@@ -7,6 +7,7 @@ from crewai import LLM, Agent, Crew, Process, Task
 
 from core.config import get_llm_settings, llm_options, today_iso
 from core.models import ResearchPlan
+from core.usage import UsageMeter
 from core.run_context import RunContext
 from flows.research_flow import FlowDeps
 from report.writer import LLMFn
@@ -193,6 +194,7 @@ def default_deps(pdf: bool = False, worker_url: str | None = None) -> FlowDeps:
         worker=worker,
         figure_llm=make_llm_fn("figure_planner", pdf),
         edit_llm=make_llm_fn("editor", pdf),
+        meter=UsageMeter(),
         check_llm=None if os.getenv("CLAIM_CHECK", "on").strip().lower() in ("off", "0", "false", "no")
         else make_llm_fn("fact_checker", pdf),
     )

@@ -3,6 +3,7 @@ import re
 import threading
 import unicodedata
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ class RunContext:
     registry: SourceRegistry
     report_stem: str = "report"
     cancel: threading.Event | None = None
+    listener: Callable[[dict], None] | None = None  # sees every log record, e.g. the app's progress line
 
     def cancelled(self) -> bool:
         return bool(self.cancel and self.cancel.is_set())
@@ -25,6 +27,11 @@ class RunContext:
         record = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "event": event, **fields}
         with (self.run_dir / "log.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+        if self.listener:
+            try:
+                self.listener(record)
+            except Exception:  # a broken progress display must never stop a run
+                pass
 
 
 def _slug(topic: str) -> str:

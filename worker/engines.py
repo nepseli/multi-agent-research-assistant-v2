@@ -127,8 +127,8 @@ _MERMAID_BOOT = (
     "const __finish=()=>{"
     # The planner already checked each diagram; this is the safety net for one that still fails to draw.
     "document.querySelectorAll('figure.diagram').forEach(f=>{if(!f.querySelector('svg'))f.remove();});"
-    "const __h=document.getElementById('figures-heading');"
-    "if(__h&&!document.querySelector('figure'))__h.remove();"
+    "const __s=document.getElementById('figures-section');"
+    "if(__s&&!__s.querySelector('figure'))__s.remove();"
     "window.__mermaid_done=true;};"
     # With an options object, mermaid.run no longer defaults to ".mermaid": name the elements.
     "mermaid.run({querySelector:'.mermaid',suppressErrors:true}).then(__finish).catch(__finish);"

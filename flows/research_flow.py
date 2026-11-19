@@ -1,6 +1,7 @@
 """ResearchFlow: router -> tiered research -> analysis -> report (Markdown, optionally PDF)."""
 import json
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,7 @@ class FlowDeps:
     edit_llm: LLMFn | None = None  # outline, length adjustment and citation repair; defaults to llm
     check_llm: LLMFn | None = None  # claim check against source text; None skips it
     year_counts: Callable[[str, str | None], dict[int, int]] | None = None
+    meter: object | None = None  # counts tokens per model while the run is going (core.usage.UsageMeter)
 
 
 @dataclass
@@ -54,6 +56,7 @@ class RunResult:
     pdf_path: Path | None
     words: int
     notes: list[str] = field(default_factory=list)
+    usage: dict | None = None  # seconds per stage, tokens per model, cost upper bound; also in usage.json
 
 
 class _State(BaseModel):
@@ -72,6 +75,7 @@ class ResearchFlow(Flow[_State]):
         deps: FlowDeps | None = None,
         base_dir: Path = Path("runs"),
         cancel: threading.Event | None = None,
+        on_event: Callable[[dict], None] | None = None,
     ):
         super().__init__(suppress_flow_events=True)
         self.topic = topic.strip()
@@ -79,6 +83,7 @@ class ResearchFlow(Flow[_State]):
         self.size = size
         self.forced_tier = forced_tier
         self.on_stage = on_stage
+        self.on_event = on_event
         self.base_dir = Path(base_dir)
         self._deps = deps
         self.cancel = cancel
@@ -90,6 +95,8 @@ class ResearchFlow(Flow[_State]):
         self.result: RunResult | None = None
         self.figures: list[tuple[FigureSpec, Path]] = []
         self.diagrams: list[str] = []
+        self.seconds: dict[str, float] = {}
+        self._stage_started: dict[str, float] = {}
 
     @property
     def deps(self) -> FlowDeps:
@@ -107,6 +114,10 @@ class ResearchFlow(Flow[_State]):
             raise ResearchCancelled(self.ctx.run_dir if self.ctx else None)
 
     def _emit(self, stage: str, status: str) -> None:
+        if status == "start":
+            self._stage_started[stage] = time.monotonic()
+        elif stage in self._stage_started:
+            self.seconds[stage] = round(time.monotonic() - self._stage_started[stage], 1)
         if self.on_stage:
             self.on_stage(stage, status)
         if self.ctx:
@@ -131,9 +142,12 @@ class ResearchFlow(Flow[_State]):
         self.plan = finalize_plan(plan, pdf=self.pdf, size=self.size, forced_tier=self.forced_tier)
         self.ctx = new_run(self.topic, base=self.base_dir)
         self.ctx.cancel = self.cancel
+        self.ctx.listener = self.on_event
         (self.ctx.run_dir / "plan.json").write_text(self.plan.model_dump_json(indent=2), encoding="utf-8")
         self.notes.extend(self.plan.warnings)
-        self.ctx.log("plan", tier=self.plan.tier, domain=self.plan.domain, size=self.size, pdf=self.pdf)
+        b = self.plan.budget
+        self.ctx.log("plan", tier=self.plan.tier, domain=self.plan.domain, size=self.size, pdf=self.pdf,
+                     max_searches=b.max_searches, max_pages=b.max_pages, max_pdfs=b.max_pdfs)
         self._emit("route", "done")
         return "routed"
 
@@ -268,6 +282,12 @@ class ResearchFlow(Flow[_State]):
         )
         if written.claims:  # every checked statement, its verdict and any fix, for review
             (self.ctx.run_dir / "claims.json").write_text(json.dumps(written.claims, indent=2), encoding="utf-8")
+        from report.method import add_method_box, method_box
+
+        searches = self._count_events("web_search") + self._count_events("academic_search")
+        box = method_box(self.plan, self.ctx.registry, written.markdown, searches=searches,
+                         claims=written.claims, env=os.environ)
+        written.markdown = add_method_box(written.markdown, box)
         md_path = self.ctx.run_dir / f"{self.ctx.report_stem}.md"
         md_path.write_text(written.markdown, encoding="utf-8")
         self.ctx.registry.save()
@@ -300,8 +320,39 @@ class ResearchFlow(Flow[_State]):
     def run(self) -> RunResult:
         if not self.topic:
             raise ValueError("A research topic is required.")
-        self.kickoff()
+        meter = self.deps.meter
+        started = time.monotonic()
+        if meter is not None:
+            meter.attach()
+        try:
+            self.kickoff()
+        finally:
+            if meter is not None:
+                meter.detach()
+            self.seconds["total"] = round(time.monotonic() - started, 1)
+            self._save_usage(meter)
         return self.result
+
+    def _save_usage(self, meter) -> None:
+        """Time per stage, tokens per model and a cost upper bound, for the app and usage.json."""
+        if self.ctx is None:
+            return
+        try:
+            from core.usage import estimate_cost, format_usage
+
+            totals = meter.totals() if meter is not None else {}
+            cost = estimate_cost(totals, os.environ) if totals else {"models": {}, "max_cost_usd": None}
+            usage = {
+                "seconds": dict(self.seconds),
+                "models": cost["models"],
+                "max_cost_usd": cost["max_cost_usd"],
+                "summary": format_usage(self.seconds["total"], totals, cost),
+            }
+            (self.ctx.run_dir / "usage.json").write_text(json.dumps(usage, indent=2), encoding="utf-8")
+            if self.result is not None:
+                self.result.usage = usage
+        except Exception as exc:  # accounting must never cost the user the report
+            self.ctx.log("usage_failed", error=str(exc))
 
     def _count_events(self, name: str) -> int:
         path = self.ctx.run_dir / "log.jsonl"
