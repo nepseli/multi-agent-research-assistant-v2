@@ -1,0 +1,9 @@
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    ports:
+      - "127.0.0.1:8000:8000"   # bound to localhost only; the worker has no auth
+    shm_size: "1gb"             # Chromium needs more than the 64 MB default
+    restart: unless-stopped
