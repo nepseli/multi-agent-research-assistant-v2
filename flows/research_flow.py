@@ -285,8 +285,10 @@ class ResearchFlow(Flow[_State]):
         from report.method import add_method_box, method_box
 
         searches = self._count_events("web_search") + self._count_events("academic_search")
+        preset = SIZE_PRESETS[self.size]
+        short = (written.words, preset.words_min, preset.words_max) if written.status == "short" else None
         box = method_box(self.plan, self.ctx.registry, written.markdown, searches=searches,
-                         claims=written.claims, env=os.environ)
+                         claims=written.claims, env=os.environ, short=short)
         written.markdown = add_method_box(written.markdown, box)
         md_path = self.ctx.run_dir / f"{self.ctx.report_stem}.md"
         md_path.write_text(written.markdown, encoding="utf-8")

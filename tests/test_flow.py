@@ -378,3 +378,11 @@ def test_report_opens_with_how_it_was_made(tmp_path):
     first, rest = md.split("\n", 1)
     assert first.startswith("# ")
     assert rest.lstrip().startswith("> **How this report was made.**")
+
+
+def test_short_report_says_why_in_its_method_box(tmp_path):
+    rec = Recorder()
+    result = _flow(tmp_path, rec, llm=ScriptedLLM(outline=_outline(), section_factor=0.2)).run()
+    box = result.markdown_path.read_text(encoding="utf-8").split("\n\n")[1]
+    assert "shorter than the" in box and "found back its statements" in box
+    assert "1 source was found and" in box  # singular, not "1 source were found"

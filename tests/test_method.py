@@ -35,3 +35,12 @@ def test_box_without_claim_check_or_reads_stays_short(tmp_path):
 def test_box_goes_right_under_the_title():
     md = add_method_box("# Topic\n\n## Summary\n\nText.\n", "> **How this report was made.** X.")
     assert md.startswith("# Topic\n\n> **How this report was made.** X.\n\n## Summary")
+
+
+def test_box_says_why_a_short_report_is_short(tmp_path):
+    plan = ResearchPlan(topic="T", tier=1, budget=TIER_CAPS[1])
+    box = method_box(plan, _registry(tmp_path), "Text [S1].", searches=5, claims=[], env=ENV, today="2026-11-19",
+                     short=(676, 800, 1200))
+    assert "676 words" in box and "800-1,200" in box and "only 1 of 3 sources" in box
+    normal = method_box(plan, _registry(tmp_path), "Text [S1].", searches=5, claims=[], env=ENV, today="2026-11-19")
+    assert "shorter" not in normal

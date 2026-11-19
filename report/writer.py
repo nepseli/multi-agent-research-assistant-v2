@@ -327,10 +327,17 @@ def write_report(
     words = count_words(text)
     status = word_status(words, preset)
     if status != "ok":
-        notes.append(
-            f"Report length is {words} words, {status} of the {preset.words_min}-{preset.words_max} "
-            f"target for a {size} report (tolerance 15%)."
-        )
+        note = (f"Report length is {words} words, {status} of the {preset.words_min}-{preset.words_max} "
+                f"target for a {size} report (tolerance 15%).")
+        removed = sum(c.get("applied") == "removed" for c in claims)
+        if status == "short" and check_llm is not None:
+            # Say why: the sources backed too little, so the claim check took statements out.
+            found, used = len(registry.all()), len(registry.cited_ids(text))
+            share = (f"none of the {found} sources found" if used == 0
+                     else f"only {used} of the {found} sources found")
+            note += (f" The sources supported too little to say more: {share} back its statements, and the "
+                     f"claim check removed {removed} statements their sources did not support.")
+        notes.append(note)
 
     # Reference only what the report actually cites (plus figure sources), not every search hit.
     cited = set(registry.cited_ids(text)) | set(extra_cited or [])

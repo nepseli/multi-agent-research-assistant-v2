@@ -382,3 +382,28 @@ def test_style_forbids_adding_details_from_memory(tmp_path):
     from report.writer import STYLE
 
     assert "memory" in STYLE.lower() and "only" in STYLE.lower()
+
+
+def test_short_report_after_claim_check_explains_it_had_too_little_support(tmp_path):
+    import json as _json
+
+    def checker(prompt):
+        ids = re.findall(r"^STATEMENT (\d+):", prompt, re.M)
+        return _json.dumps([{"id": int(i), "verdict": "unsupported", "fix": ""} for i in ids])
+
+    r = _registry(tmp_path)
+    r.add("https://a.com", "Alpha Source", "web", "read_page", content="Alpha says word word word.")
+    r.add("https://b.com", "Beta", "web", "web_search", content="snippet")
+    r.add("https://c.com", "Gamma", "web", "web_search", content="snippet")
+    llm = ScriptedLLM(outline=_outline(3), section_factor=0.3, body_suffix="Claim one [S1]. Claim two [S1].")
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=r, llm=llm, check_llm=checker)
+    assert out.status == "short"
+    note = next(n for n in out.notes if n.startswith("Report length"))
+    assert "too little" in note and "of the 3 sources" in note and "removed" in note
+
+
+def test_short_report_without_claim_check_keeps_the_plain_length_note(tmp_path):
+    llm = ScriptedLLM(outline=_outline(3), section_factor=0.3)
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    note = next(n for n in out.notes if n.startswith("Report length"))
+    assert "too little" not in note

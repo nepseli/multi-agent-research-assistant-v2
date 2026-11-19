@@ -40,7 +40,7 @@ _YEARS = re.compile(r"\s*\b((?:19|20)\d{2})(?:\s*[-–/]\s*((?:19|20)\d{2}))?\b"
 STALE_YEARS = 6  # years before this one that a model adds from habit; older ones are deliberate history
 
 
-def _drop_stale_years(query: str, topic: str, year: int) -> str:
+def drop_stale_years(query: str, topic: str, year: int) -> str:
     """Remove recent-past years the topic did not ask for: models add their training-data years
     ("... 2024"), which narrows search to old results."""
 
@@ -65,7 +65,7 @@ def parse_plan(raw: str | dict, topic: str, year: int | None = None) -> Research
         if not data["subqueries"]:
             data["subqueries"] = [topic]
         this_year = year or date.today().year
-        data["subqueries"] = [_drop_stale_years(str(q), topic, this_year) for q in data["subqueries"]]
+        data["subqueries"] = [drop_stale_years(str(q), topic, this_year) for q in data["subqueries"]]
         data["budget"] = data.get("budget") or TIER_CAPS[tier].model_dump()
         data.pop("warnings", None)
         return ResearchPlan(**data)
