@@ -13,7 +13,8 @@ def env(monkeypatch):
     for prefix in ("ROUTER_AGENT", "RESEARCH_AGENT", "ANALYST_AGENT", "WRITER_AGENT", "EDITOR", "FIGURE_PLANNER"):
         for suffix in ("_LLM", "_TEMP", "_LLM_PDF", "_TEMP_PDF"):
             monkeypatch.delenv(prefix + suffix, raising=False)
-    for name in ("STRONG_LLM_PDF", "LIGHT_LLM_PDF"):
+    for name in ("STRONG_LLM_PDF", "LIGHT_LLM_PDF", "STRONG_REASONING", "LIGHT_REASONING", "FIGURE_PLANNER_REASONING", "EDITOR_REASONING",
+                 "OPENROUTER_SORT", "STRONG_MAX_PRICE", "LIGHT_MAX_PRICE"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("STRONG_LLM", "openrouter/openai/gpt-oss-120b")
     monkeypatch.setenv("LIGHT_LLM", "openrouter/openai/gpt-oss-20b")
@@ -76,3 +77,21 @@ def test_default_deps_returns_callables():
     deps = factories.default_deps(pdf=False, worker_url="http://localhost:9")
     assert isinstance(deps, FlowDeps)
     assert all(callable(f) for f in (deps.route, deps.research, deps.analyse, deps.llm))
+
+
+def test_llms_carry_reasoning_and_routing_options():
+    editor = factories._llm("editor", pdf=False)
+    assert editor.reasoning_effort == "low"
+    assert editor.additional_params["extra_body"]["provider"]["sort"] == "throughput"
+    assert factories._llm("writer", pdf=False).reasoning_effort is None
+
+
+def test_approximate_token_count_warning_is_hidden_but_other_warnings_are_not(caplog):
+    import logging
+
+    log = logging.getLogger("crewai.llms.base_llm")
+    with caplog.at_level(logging.WARNING, logger="crewai.llms.base_llm"):
+        log.warning("Using an approximate input token count for model %r: assuming one token per four characters", "m")
+        log.warning("something else went wrong")
+    assert "approximate input token count" not in caplog.text
+    assert "something else went wrong" in caplog.text

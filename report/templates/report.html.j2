@@ -11,11 +11,15 @@ th { background: #eaf0f6; }
 caption, figcaption { font-size: 9pt; color: #555; margin: 4pt 0 10pt; }
 figure { margin: 12pt 0; text-align: center; page-break-inside: avoid; }
 figure img { max-width: 100%; }
+/* A diagram must fit on one page with its caption; the planner already rejects drawings far over this. */
+figure.diagram pre.mermaid { margin: 0; }
+figure.diagram svg { max-width: 100% !important; max-height: 160mm; height: auto; }
+#figures-heading { break-after: avoid; page-break-after: avoid; }
 .notes { font-size: 9pt; color: #555; border-top: 1px solid #ccc; margin-top: 18pt; }
 </style></head>
 <body>
 {{ body | safe }}
-{% if figures_html %}<h2>Figures</h2>{{ figures_html | safe }}{% endif %}
+{% if figures_html %}<h2 id="figures-heading">Figures</h2>{{ figures_html | safe }}{% endif %}
 {{ references | safe }}
 {% if notes %}<div class="notes"><h2>Coverage notes</h2><ul>{% for n in notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
 </body></html>

@@ -12,7 +12,22 @@ _CITE = re.compile(r"\[(S\d+)\]")
 _GROUP = re.compile(r"\[\s*(S\d+(?:\s*[,;]\s*S\d+)+)\s*\]")
 
 
+# gpt-oss tends to cite as 【S8】 or 【S8†L10-L12】 (its browsing-tool format), sometimes 【S1, S4】.
+_FULLWIDTH = re.compile(r"【([^】]*)】")
+
+
+def normalize_citations(text: str) -> str:
+    """Rewrite full-width citations as [S#]; brackets without an S# id are left alone."""
+
+    def repl(m: re.Match) -> str:
+        ids = re.findall(r"S\d+", m.group(1).split("†", 1)[0])
+        return ", ".join(f"[{i}]" for i in ids) if ids else m.group(0)
+
+    return _FULLWIDTH.sub(repl, text)
+
+
 def _split_groups(text: str) -> str:
+    text = normalize_citations(text)
     return _GROUP.sub(lambda m: ", ".join(f"[{i}]" for i in re.split(r"\s*[,;]\s*", m.group(1))), text)
 
 

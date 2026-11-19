@@ -110,3 +110,37 @@ def test_docling_converter_is_built_once_and_reused(fake_docling):
     b = asyncio.run(engines.parse_pdf_url("https://a.com/2.pdf"))
     assert a["ok"] and b["ok"] and a["markdown"] == "# Paper"
     assert len(fake_docling) == 1
+
+
+def test_mermaid_boot_styles_diagrams_and_removes_failed_ones():
+    from worker import engines
+
+    boot = engines._MERMAID_BOOT
+    assert "suppressErrorRendering" in boot  # never draw the "Syntax error" bomb
+    assert "#1f4e79" in boot and "Georgia" in boot  # report palette and font
+    assert "disableMulticolor" in boot  # one-colour timelines
+    assert "figure.diagram" in boot and ".remove()" in boot  # drop a diagram that failed to draw
+    # mermaid.run(options) only defaults to ".mermaid" when called with no options at all.
+    assert "querySelector:'.mermaid'" in boot
+
+
+def test_timeline_layout_is_tightened():
+    from worker import engines
+
+    timeline = engines.MERMAID_CONFIG["timeline"]
+    assert timeline["leftMargin"] <= 20 and timeline["width"] <= 120
+
+
+def test_figures_heading_removed_when_no_figure_is_left():
+    from worker import engines
+
+    assert "figures-heading" in engines._MERMAID_BOOT
+
+
+def test_mindmap_branches_use_report_blues():
+    from worker import engines
+
+    tv = engines.MERMAID_CONFIG["themeVariables"]
+    assert all(f"cScale{i}" in tv for i in range(12))
+    # White labels beyond the first would also turn timeline connector lines white (invisible).
+    assert [k for k in tv if k.startswith("cScaleLabel")] == ["cScaleLabel0"]

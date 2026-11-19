@@ -239,3 +239,53 @@ def test_flow_passes_editor_model_to_writer(tmp_path):
     ResearchFlow("GaN defects", deps=deps, base_dir=tmp_path).run()
     assert editor.calls[0] == "OUTLINE_REQUEST"
     assert "OUTLINE_REQUEST" not in writer.calls
+
+
+def test_diagrams_are_checked_by_the_worker_and_saved(tmp_path):
+    worker = FakeWorker()
+    flow, deps = _pdf_flow(tmp_path, worker=worker)
+    result = flow.run()
+    saved = json.loads((result.run_dir / "diagrams.json").read_text(encoding="utf-8"))
+    assert saved[0]["status"] == "ok" and saved[0]["caption"] == "Process"
+    assert worker.mermaid_checks == [["flowchart LR\n A-->B"]]
+
+
+def test_dropped_diagram_is_noted(tmp_path):
+    class BrokenDiagramLLM(FigureLLM):
+        def __call__(self, prompt):
+            kind = prompt.split("\n", 1)[0]
+            if kind == "DIAGRAM_REQUEST":
+                self.calls.append(kind)
+                return json.dumps([{"code": "flowchart LR\n A --> SYNTAX_ERROR", "caption": "Broken"}])
+            if kind == "DIAGRAM_FIX_REQUEST":
+                self.calls.append(kind)
+                return "flowchart LR\n A --> SYNTAX_ERROR"
+            return super().__call__(prompt)
+
+    flow, deps = _pdf_flow(tmp_path)
+    deps.figure_llm = BrokenDiagramLLM()
+    result = flow.run()
+    assert any("Diagram left out" in n and "Broken" in n for n in result.notes)
+    assert flow.diagrams == []
+
+
+def test_cli_prints_notes_the_console_cannot_encode(monkeypatch, capsys):
+    import io
+    import main as cli
+
+    class Result:
+        markdown_path, words, pdf_path, notes = "r.md", 10, None, ["Diagram left out: agentic\u2011AI"]
+
+    class Flow:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self):
+            return Result()
+
+    monkeypatch.setattr("flows.research_flow.ResearchFlow", Flow)
+    raw = io.BytesIO()
+    monkeypatch.setattr(cli.sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252"))
+    assert cli.main(["--topic", "t"]) == 0
+    cli.sys.stdout.flush()
+    assert b"Diagram left out: agentic?AI" in raw.getvalue()

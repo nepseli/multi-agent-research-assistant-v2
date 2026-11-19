@@ -31,6 +31,14 @@ class FakeWorker:
 
     def __init__(self, healthy=True):
         self.healthy = healthy
+        self.mermaid_checks = []
+
+    def check_mermaid(self, codes):
+        """Draws everything except code containing SYNTAX_ERROR; None when down, like the real client."""
+        if not self.healthy:
+            return None
+        self.mermaid_checks.append(list(codes))
+        return [{"error": "Parse error" if "SYNTAX_ERROR" in c else None, "width": 500, "height": 200} for c in codes]
 
     def health(self):
         return {"ok": True, "scrape": True, "parse_pdf": True, "render_pdf": True} if self.healthy else {"ok": False, "error": "down"}

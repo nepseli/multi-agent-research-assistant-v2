@@ -9,7 +9,7 @@ A CrewAI research workflow that first decides **how deeply** to search, then res
 1. **Route.** A router agent classifies the topic and picks a depth tier. Code, not the model, sets the budgets.
 2. **Research.** A research agent uses only the tools the tier allows, within its search, page and PDF budgets.
 3. **Analyse.** An analyst agent finds patterns and conclusions.
-4. **Figures** (PDF only). Charts are drawn only from real data files (OpenAlex publication counts, tables parsed from papers); chart specs without data are rejected. Mermaid diagrams are accepted only for known diagram types.
+4. **Figures** (PDF only). Charts are drawn only from real data files (OpenAlex publication counts, tables parsed from papers); chart specs without data are rejected. Mermaid diagrams (flowchart, timeline, mindmap) are held to size limits that keep them readable on an A4 page, then drawn by the worker to catch syntax errors and drawings too wide or tall for a page. A rejected diagram gets one repair attempt with the reason, and is left out (with a coverage note) if it still fails. Each diagram's source and outcome is saved to `runs/<id>/diagrams.json`.
 5. **Write.** The writer plans an outline, writes each section to a word target, and checks the length.
 6. **Render** (PDF only). The Docker worker turns styled HTML into a PDF. If rendering fails you still get the Markdown report and a coverage note.
 
@@ -87,6 +87,16 @@ Without the worker the app still runs: it falls back to search snippets and abst
 | `LIGHT_LLM` | `openrouter/openai/gpt-oss-20b` | editor (outline, length adjustment, citation repair), figure and diagram planner |
 
 Any role can be pinned to its own model with `ROUTER_AGENT_LLM`, `RESEARCH_AGENT_LLM`, `ANALYST_AGENT_LLM`, `WRITER_AGENT_LLM`, `EDITOR_LLM` or `FIGURE_PLANNER_LLM`. Temperatures are optional (`*_TEMP`). For PDF reports only, `STRONG_LLM_PDF` / `LIGHT_LLM_PDF` or a role's `*_LLM_PDF` take precedence; `openrouter/openai/gpt-5` is a valid OpenRouter ID. The Streamlit sidebar shows which model each step will use.
+
+**Speed settings.** These are all optional; the defaults are shown.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `OPENROUTER_SORT` | `throughput` | Ask OpenRouter for its fastest host of the model. `default` keeps OpenRouter's own price-weighted choice. |
+| `STRONG_MAX_PRICE` / `LIGHT_MAX_PRICE` | `0.15,0.60` / `0.075,0.30` | Highest price allowed when choosing a host, in USD per million tokens (input,output). The defaults are Groq's prices, so the dearest hosts are skipped. Applies only to `STRONG_LLM` / `LIGHT_LLM`, not to role or PDF overrides. `none` removes the cap. |
+| `STRONG_REASONING` / `LIGHT_REASONING` | model default / `low` | How hard gpt-oss thinks before answering (`low`, `medium` or `high`). `default` sends nothing. |
+| `<ROLE>_REASONING` (e.g. `FIGURE_PLANNER_REASONING`) | `medium` for the figure planner | Per-role override; beats the tier setting. The figure planner defaults to `medium` because diagram syntax breaks more often at `low`. |
+| `WRITER_PARALLELISM` | `4` | How many report sections are written at once. `1` writes them one after another. |
 
 ## Tests
 

@@ -1,3 +1,7 @@
+import re
+import threading
+import time
+
 from core.config import SIZE_PRESETS
 from core.registry import SourceRegistry
 from report.validators import count_words, word_status
@@ -142,3 +146,58 @@ def test_writer_alone_still_does_everything(tmp_path):
     llm = ScriptedLLM(outline=_outline(3))
     write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
     assert llm.calls[0] == "OUTLINE_REQUEST" and "SECTION_REQUEST" in llm.calls
+
+
+class _ConcurrencyLLM(ScriptedLLM):
+    """Records how many section calls overlap; each one waits briefly so overlap is observable."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self._lock = threading.Lock()
+        self.active = self.peak = 0
+
+    def __call__(self, prompt):
+        if not prompt.startswith(("SECTION_REQUEST", "ADJUST_REQUEST")):
+            return super().__call__(prompt)
+        with self._lock:
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+        time.sleep(0.05)
+        heading = re.search(r"HEADING: (.*)", prompt).group(1)
+        out = super().__call__(prompt) + f" ({heading})"
+        with self._lock:
+            self.active -= 1
+        return out
+
+
+def test_sections_are_written_in_parallel_and_kept_in_outline_order(tmp_path):
+    llm = _ConcurrencyLLM(outline=_outline(5))
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                       llm=llm, parallelism=5)
+    assert llm.peak > 1
+    positions = [out.markdown.index(f"## Section {i}") for i in range(5)]
+    assert positions == sorted(positions)
+    for i in range(5):  # each body sits under its own heading
+        assert f"(Section {i})" in out.markdown.split(f"## Section {i}", 1)[1].split("## ", 1)[0]
+
+
+def test_length_pass_also_runs_in_parallel(tmp_path):
+    llm = _ConcurrencyLLM(outline=_outline(4), section_factor=0.3)
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                 llm=ScriptedLLM(outline=_outline(4), section_factor=0.3), edit_llm=llm, parallelism=4)
+    assert llm.calls.count("ADJUST_REQUEST") == 4 and llm.peak > 1
+
+
+def test_parallelism_one_writes_sections_one_at_a_time(tmp_path):
+    llm = _ConcurrencyLLM(outline=_outline(3))
+    write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path),
+                 llm=llm, parallelism=1)
+    assert llm.peak == 1
+
+
+def test_fullwidth_citations_count_and_reach_references(tmp_path):
+    llm = ScriptedLLM(outline=_outline(3), body_suffix="Claim 【S1】.")
+    out = write_report(topic="T", findings="f", analysis="a", size="medium", registry=_registry(tmp_path), llm=llm)
+    assert "【" not in out.markdown
+    assert "[S1] Alpha Source" in out.markdown
+    assert "No sources were cited" not in out.markdown

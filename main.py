@@ -19,6 +19,10 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    # Notes and captions carry model text (non-breaking hyphens, CJK brackets); a cp1252 console
+    # cannot print them, and a crash here would hide where the finished report was saved.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     from flows.research_flow import ResearchFlow
 
     flow = ResearchFlow(

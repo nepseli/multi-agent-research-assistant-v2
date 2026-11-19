@@ -41,6 +41,14 @@ class ParseRequest(BaseModel):
     url: str
 
 
+class MermaidCheckRequest(BaseModel):
+    codes: list[str]
+
+
+MAX_DIAGRAMS = 20
+MAX_DIAGRAM_CHARS = 20_000
+
+
 class RenderRequest(BaseModel):
     html: str
     assets: dict[str, str] = {}
@@ -88,3 +96,13 @@ async def render_pdf(req: RenderRequest):
     except Exception as exc:
         return _reject(f"render failed: {exc}", status=500)
     return Response(content=pdf, media_type="application/pdf")
+
+
+@app.post("/check-mermaid")
+async def check_mermaid(req: MermaidCheckRequest):
+    if len(req.codes) > MAX_DIAGRAMS or any(len(c) > MAX_DIAGRAM_CHARS for c in req.codes):
+        return _reject(f"at most {MAX_DIAGRAMS} diagrams of {MAX_DIAGRAM_CHARS} characters each")
+    try:
+        return {"ok": True, "results": await engines.check_mermaid(req.codes)}
+    except Exception as exc:
+        return _reject(f"mermaid check failed: {exc}", status=500)

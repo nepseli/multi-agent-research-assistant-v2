@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import importlib.util
+import json
 import os
 import tempfile
 import threading
@@ -15,6 +16,7 @@ def capabilities() -> dict:
         "scrape": importlib.util.find_spec("crawl4ai") is not None,
         "parse_pdf": importlib.util.find_spec("docling") is not None,
         "render_pdf": importlib.util.find_spec("playwright") is not None,
+        "check_mermaid": importlib.util.find_spec("playwright") is not None and MERMAID_JS.exists(),
     }
 
 
@@ -87,12 +89,86 @@ async def parse_pdf_url(url: str) -> dict:
     return await asyncio.to_thread(_parse_pdf_sync, url)
 
 
+# Diagrams follow the report's look (navy on pale blue, Georgia) instead of Mermaid's yellow and purple.
+MERMAID_CONFIG = {
+    "startOnLoad": False,
+    "theme": "base",
+    "suppressErrorRendering": True,  # a diagram that fails is left empty (then removed), never the error bomb
+    "fontFamily": "Georgia, serif",
+    "themeVariables": {
+        "fontFamily": "Georgia, serif",
+        "fontSize": "15px",
+        "primaryColor": "#eaf0f6",
+        "primaryBorderColor": "#1f4e79",
+        "primaryTextColor": "#222222",
+        "lineColor": "#1f4e79",
+        "secondaryColor": "#f4f6f9",
+        "tertiaryColor": "#ffffff",
+        "clusterBkg": "#f7f9fc",
+        "clusterBorder": "#9fb3c8",
+        "edgeLabelBackground": "#ffffff",
+        # Timeline periods and mindmap branches cycle through cScale0..11: blues instead of a rainbow.
+        # Only the navy first colour gets white text. Timelines draw their connector lines in the
+        # cScaleLabel colours, so the rest keep Mermaid's dark default on light tints.
+        "cScale0": "#1f4e79",
+        "cScaleLabel0": "#ffffff",
+        **{f"cScale{i}": c for i, c in enumerate(
+            ["#c9daea", "#dbe6f1", "#b7cde3", "#e6eef6", "#a9c3de", "#d2e1ef"] * 2, start=1) if i < 12},
+    },
+    "flowchart": {"curve": "basis", "useMaxWidth": True, "wrappingWidth": 160, "padding": 12},
+    # Tighter than the defaults (the left margin alone is ~250 px): 3 periods draw 650 px wide, not 995.
+    "timeline": {"disableMulticolor": True, "useMaxWidth": True, "leftMargin": 10, "width": 120, "padding": 5},
+    "mindmap": {"useMaxWidth": True},
+}
+
 _MERMAID_BOOT = (
     "<script src=\"mermaid.min.js\"></script><script>"
-    "mermaid.initialize({startOnLoad:false});"
-    "mermaid.run().then(()=>{window.__mermaid_done=true}).catch(()=>{window.__mermaid_done=true});"
+    f"mermaid.initialize({json.dumps(MERMAID_CONFIG)});"
+    "const __finish=()=>{"
+    # The planner already checked each diagram; this is the safety net for one that still fails to draw.
+    "document.querySelectorAll('figure.diagram').forEach(f=>{if(!f.querySelector('svg'))f.remove();});"
+    "const __h=document.getElementById('figures-heading');"
+    "if(__h&&!document.querySelector('figure'))__h.remove();"
+    "window.__mermaid_done=true;};"
+    # With an options object, mermaid.run no longer defaults to ".mermaid": name the elements.
+    "mermaid.run({querySelector:'.mermaid',suppressErrors:true}).then(__finish).catch(__finish);"
     "</script>"
 )
+
+_CHECK_JS = """async (codes) => {
+  mermaid.initialize(%s);
+  const out = [];
+  for (let i = 0; i < codes.length; i++) {
+    try {
+      const { svg } = await mermaid.render('check' + i, codes[i]);
+      const box = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement.getAttribute('viewBox') || '';
+      const [, , w, h] = box.split(/\\s+/).map(Number);
+      out.push({ ok: true, error: null, width: w || null, height: h || null });
+    } catch (e) {
+      out.push({ ok: false, error: String((e && e.message) || e).slice(0, 500), width: null, height: null });
+    }
+    document.querySelectorAll('[id^="dcheck"], [id^="check"]').forEach(n => n.remove());
+  }
+  return out;
+}"""
+
+
+async def check_mermaid(codes: list[str]) -> list[dict]:
+    """Draw each diagram in a headless browser: syntax errors come back as messages, and the size of
+    the drawing (viewBox width and height) lets the planner reject diagrams too tall for a page."""
+    from playwright.async_api import async_playwright
+
+    config = {**MERMAID_CONFIG, "suppressErrorRendering": False}
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        try:
+            page = await browser.new_page()
+            await page.route("**/*", lambda route: route.abort())  # nothing is fetched while checking
+            await page.set_content("<html><body></body></html>")
+            await page.add_script_tag(content=MERMAID_JS.read_text(encoding="utf-8"))
+            return await page.evaluate(_CHECK_JS % json.dumps(config), codes)
+        finally:
+            await browser.close()
 _FOOTER = (
     "<div style=\"font-size:9px;width:100%;text-align:center;color:#666\">"
     "<span class=\"pageNumber\"></span> / <span class=\"totalPages\"></span></div>"

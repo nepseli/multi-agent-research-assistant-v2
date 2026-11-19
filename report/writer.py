@@ -1,11 +1,13 @@
 """Size-controlled report writer: outline first, then one LLM call per section."""
 import json
+import os
 import re
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from core.config import SIZE_PRESETS
-from core.registry import SourceRegistry
+from core.registry import SourceRegistry, normalize_citations
 from report.validators import count_words, strip_references, word_status
 
 LLMFn = Callable[[str], str]
@@ -46,7 +48,7 @@ _RULE = re.compile(r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$")
 
 def _clean_body(text: str, topic: str = "") -> str:
     lines = []
-    for line in strip_references(text).splitlines():
+    for line in strip_references(normalize_citations(text)).splitlines():
         if _H1.match(line) or _WORD_BANNER.match(line):
             continue
         bold = re.fullmatch(r"[ \t]*\*\*(.+?)\*\*[ \t]*", line)
@@ -79,6 +81,26 @@ def _parse_outline(raw: str, size: str, midpoint: int) -> list[dict]:
     return [{"heading": h, "words": midpoint // len(headings)} for h in headings]
 
 
+DEFAULT_PARALLELISM = 4
+
+
+def _parallelism(value: int | None) -> int:
+    if value is None:
+        try:
+            value = int(os.getenv("WRITER_PARALLELISM", DEFAULT_PARALLELISM))
+        except ValueError:
+            value = DEFAULT_PARALLELISM
+    return max(1, value)
+
+
+def _map(fn, items: list, workers: int) -> list:
+    """Run fn over items, up to `workers` model calls at once, keeping the input order."""
+    if workers == 1 or len(items) < 2:
+        return [fn(i) for i in items]
+    with ThreadPoolExecutor(max_workers=min(workers, len(items))) as pool:
+        return list(pool.map(fn, items))
+
+
 def _assemble(topic: str, sections: list[tuple[str, str]]) -> str:
     parts = [f"# {topic}"]
     for heading, body in sections:
@@ -98,9 +120,15 @@ def write_report(
     notes: list[str] | None = None,
     extra_cited: list[str] | None = None,
     edit_llm: LLMFn | None = None,
+    parallelism: int | None = None,
 ) -> WrittenReport:
     """`llm` writes the prose sections; `edit_llm` (a lighter model) does the outline, length
-    adjustment and citation repair. Without `edit_llm`, `llm` does everything."""
+    adjustment and citation repair. Without `edit_llm`, `llm` does everything.
+
+    Sections are independent, so they and their length pass run `parallelism` calls at a time
+    (default WRITER_PARALLELISM, else 4). Each section still sees the full material.
+    """
+    workers = _parallelism(parallelism)
     edit = edit_llm or llm
     preset = SIZE_PRESETS[size]
     midpoint = (preset.words_min + preset.words_max) // 2
@@ -130,14 +158,16 @@ def write_report(
             size,
             midpoint,
         )
-        sections = []
-        for item in outline:
+
+        def write_section(item: dict) -> tuple[str, str]:
             raw = llm(
                 f"SECTION_REQUEST\nHEADING: {item['heading']}\nTARGET_WORDS: {item['words']}\n"
                 f"{table_hint}Write only this section's body in Markdown, no heading line. "
                 f"Cite sources as [S#]. Do not add a title, a word count or a references list.\n\n{material}"
             )
-            sections.append((item["heading"], _clean_body(raw, topic)))
+            return item["heading"], _clean_body(raw, topic)
+
+        sections = _map(write_section, outline, workers)
         text = _assemble(topic, sections)
 
     # One expand-or-trim pass if the length is off target.
@@ -147,15 +177,17 @@ def write_report(
             sections = [("Report", fixed)]
             text = f"# {topic}\n\n{fixed}"
         else:
-            adjusted = []
-            for (heading, body), item in zip(sections, outline):
+
+            def adjust(pair: tuple[tuple[str, str], dict]) -> tuple[str, str]:
+                (heading, body), item = pair
                 fixed = edit(
                     f"ADJUST_REQUEST\nHEADING: {heading}\nRewrite this section to about the target length "
                     f"(expand with evidence from the material, or trim).\nTARGET_WORDS: {item['words']}\n\n"
                     f"{material}\nTEXT:\n{body}"
                 )
-                adjusted.append((heading, _clean_body(fixed, topic)))
-            sections = adjusted
+                return heading, _clean_body(fixed, topic)
+
+            sections = _map(adjust, list(zip(sections, outline)), workers)
             text = _assemble(topic, sections)
 
     # Citations: one repair attempt, then strip anything still unknown.

@@ -41,7 +41,7 @@ def test_mermaid_block_accepts_and_escapes():
 
 def test_plan_diagrams_parses_json_and_filters_invalid():
     raw = '[{"code": "flowchart TD\\n A-->B", "caption": "ok"}, {"code": "nonsense", "caption": "bad"}]'
-    out = plan_diagrams(lambda p: raw, "f", "a", 2)
-    assert len(out) == 1 and "ok" in out[0]
+    out = [d for d in plan_diagrams(lambda p: raw, "f", "a", 2) if d.status != "dropped"]
+    assert len(out) == 1 and "ok" in out[0].block()
     assert plan_diagrams(lambda p: "garbage", "f", "a", 2) == []
     assert plan_diagrams(lambda p: raw, "f", "a", 0) == []

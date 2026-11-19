@@ -1,16 +1,30 @@
 """Agents and crews are built per run, so models, tools and budgets can differ between runs."""
+import logging
 import os
 import textwrap
 
 from crewai import LLM, Agent, Crew, Process, Task
 
-from core.config import get_llm_settings
+from core.config import get_llm_settings, llm_options
 from core.models import ResearchPlan
 from core.run_context import RunContext
 from flows.research_flow import FlowDeps
 from report.writer import LLMFn
 from tools.research_tools import build_tools
 from tools.worker_client import WorkerClient
+
+class _HideApproxTokenCount(logging.Filter):
+    """CrewAI warns on every tool result that it is estimating tokens as characters / 4 because
+    OpenRouter models have no native counter. The estimate is harmless and only used for a
+    context-size check, so the warning is noise."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not str(record.msg).startswith("Using an approximate input token count")
+
+
+_base_llm_log = logging.getLogger("crewai.llms.base_llm")
+if not any(type(f).__name__ == _HideApproxTokenCount.__name__ for f in _base_llm_log.filters):  # once, even on reload
+    _base_llm_log.addFilter(_HideApproxTokenCount())
 
 _TIER_GUIDE = textwrap.dedent(
     """\
@@ -42,7 +56,7 @@ def router_prompt(topic: str) -> str:
 
 def _llm(role: str, pdf: bool) -> LLM:
     model, temperature = get_llm_settings(role, pdf=pdf)
-    return LLM(model=model, temperature=temperature)
+    return LLM(model=model, temperature=temperature, **llm_options(role, pdf))
 
 
 def make_llm_fn(role: str, pdf: bool = False) -> LLMFn:

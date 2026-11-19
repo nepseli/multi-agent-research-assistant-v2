@@ -1,4 +1,4 @@
-from core.registry import SourceRegistry
+from core.registry import SourceRegistry, normalize_citations
 
 
 def _reg(tmp_path):
@@ -102,3 +102,17 @@ def test_references_markdown_says_so_when_nothing_cited(tmp_path):
     r.add("https://a.com", "Alpha", "web", "web_search")
     md = r.references_markdown(cited=[])
     assert "Alpha" not in md and "No sources were cited" in md
+
+
+def test_fullwidth_citations_normalised_to_ascii():
+    # gpt-oss often cites as 【S8】, sometimes with a †line-range suffix or several ids.
+    text = "A 【S8】. B 【S2†L10-L12】. C 【S1, S4】. Not a cite: 【note】."
+    assert normalize_citations(text) == "A [S8]. B [S2]. C [S1], [S4]. Not a cite: 【note】."
+
+
+def test_cited_ids_and_validation_read_fullwidth_citations(tmp_path):
+    r = _reg(tmp_path)
+    r.add("https://a.com", "A", "web", "web_search")
+    assert SourceRegistry.cited_ids("x 【S1】 y 【S9】") == ["S1", "S9"]
+    report = r.validate_citations("x 【S1】 y 【S9】.")
+    assert report.unknown == ["S9"] and report.cleaned == "x [S1] y."
